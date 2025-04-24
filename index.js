@@ -1,0 +1,180 @@
+const express = require("express");
+const http = require("http");
+const cors = require("cors");
+const { Server } = require("socket.io");
+const puppeteer = require("puppeteer");
+const { getStream, launch } = require("puppeteer-stream");
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+let browser;
+let stream;
+let page;
+
+const delay = (min, max) => {
+  // Generate a random delay between min and max milliseconds
+  const randomDelay = Math.floor(Math.random() * (max - min + 1)) + min;
+  return new Promise((resolve) => setTimeout(resolve, randomDelay));
+};
+
+async function sendWhatsAppMessage(phoneNumbers, message) {
+  for (let phoneNumber of phoneNumbers) {
+    await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 30000 });
+    await delay(1000, 2000);
+    const searchInput = await page.$('div[contenteditable="true"][data-tab="3"]');
+    for (const digit of phoneNumber) {
+      await searchInput.type(digit);
+      await delay(30, 100);
+    }
+    await delay(500, 1000);
+    await page.keyboard.press("Enter");
+    await page.waitForSelector('div[contenteditable="true"][data-tab="10"]', { timeout: 30000 });
+    await delay(1000, 2000);
+    const messageInput = await page.$('div[contenteditable="true"][data-tab="10"]');
+    for (const char of message) {
+      await messageInput.type(char);
+      await delay(30, 100);
+    }
+    await delay(500, 1000);
+    await page.keyboard.press("Enter");
+    await delay(500, 1000);
+  }
+}
+
+async function scrapeWhatsAppPhoneNumbers() {
+  //   await page.goto("https://web.whatsapp.com");
+  await page.waitForSelector("div[role='grid']", { timeout: 60000 });
+  await page.hover("div[role='grid']"); // hover on chat list pane
+
+  let phoneNumbersSet = new Set();
+  for (let i = 0; i < 20; i++) {
+    await page.mouse.wheel({ deltaY: 1280 }); // blast scroll
+    await delay(1000, 1500);
+
+    const phoneNumbers = await page.$$eval("div[role='grid'] > div", (nodes) => {
+      return nodes
+        .map((el) => {
+          // Skip groups (groups typically have a group icon)
+          const isGroup = !!el.querySelector('span[data-icon="default-group"]') || !!el.querySelector('span[data-icon="default-user-group"]');
+
+          if (isGroup) return null;
+
+          // Try to find the phone number
+          // Look for the data-id attribute which often contains the phone number
+          const chatDiv = el.querySelector("[data-id]");
+          if (chatDiv) {
+            const dataId = chatDiv.getAttribute("data-id");
+            // Extract phone number from data-id (format is usually something like "1234567890@c.us")
+            const match = dataId && dataId.match(/(\d+)@c\.us/);
+            return match ? match[1] : null;
+          }
+
+          // Alternative approach: Look for specific spans with phone numbers
+          const spans = el.querySelectorAll("span");
+          for (const span of spans) {
+            // Phone numbers are often in the format +xx xxx xxx xxxx or similar
+            const text = span.textContent;
+            if (/^\+?\d[\d\s-]{8,}$/.test(text)) {
+              return text.replace(/\s+/g, ""); // Remove spaces
+            }
+          }
+
+          return null;
+        })
+        .filter(Boolean);
+    });
+
+    phoneNumbers.forEach((num) => phoneNumbersSet.add(num));
+  }
+
+  const allPhoneNumbers = Array.from(phoneNumbersSet);
+  console.log("Phone numbers found:", allPhoneNumbers.length);
+  console.log(allPhoneNumbers);
+  return allPhoneNumbers;
+}
+
+app.post("/send-message", async (req, res) => {
+  const { phones, message } = req.body;
+  if (!phones.length || !message) {
+    return res.status(400).send("Phone numbers and message are required.");
+  }
+  try {
+    await sendWhatsAppMessage(phones, message);
+    res.status(200).send("Message sent successfully.");
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).send("Failed to send message.");
+  }
+});
+
+app.get("/scrape-contacts", async (req, res) => {
+  try {
+    const contacts = await scrapeWhatsAppPhoneNumbers();
+    res.status(200).json({ contacts });
+  } catch (err) {
+    console.error("Scrape error:", err);
+    res.status(500).send("Failed to scrape contacts.");
+  }
+});
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: { origin: "http://localhost:3000" }, // your Next.js frontend port
+});
+
+io.on("connection", (socket) => {
+  console.log("Frontend connected:", socket.id);
+
+  socket.on("start-stream", async ({ url }) => {
+    console.log("Starting Puppeteer stream:", url);
+
+    browser = await launch({
+      headless: false,
+      executablePath: puppeteer.executablePath(),
+    });
+    page = await browser.newPage();
+    await page.goto(url);
+
+    stream = await getStream(page, {
+      audio: false,
+      video: true,
+      mimeType: "video/webm; codecs=vp8",
+    });
+
+    stream.on("data", (chunk) => {
+      socket.emit("video-stream", chunk);
+    });
+
+    stream.on("error", async (err) => {
+      console.error("Stream error:", err);
+      if (browser) {
+        await browser.close();
+        browser = null;
+      }
+      socket.emit("stream-ended");
+    });
+
+    stream.on("end", async () => {
+      console.log("Stream ended normally");
+      if (browser) {
+        await browser.close();
+        browser = null;
+      }
+      socket.emit("stream-ended");
+    });
+  });
+  socket.on("disconnect", async () => {
+    console.log("Frontend disconnected:", socket.id);
+    if (browser) {
+      await browser.close();
+      browser = null;
+    }
+  });
+});
+
+server.listen(4000, () => {
+  console.log("Server is running on http://localhost:4000");
+});

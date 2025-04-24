@@ -4,6 +4,7 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
 const { getStream, launch } = require("puppeteer-stream");
+require("dotenv").config();
 
 const app = express();
 
@@ -12,6 +13,11 @@ app.use(express.json());
 let browser;
 let stream;
 let page;
+
+// Add a simple route for health check
+app.get("/", (req, res) => {
+  res.send("Server is running");
+});
 
 const delay = (min, max) => {
   // Generate a random delay between min and max milliseconds
@@ -44,7 +50,6 @@ async function sendWhatsAppMessage(phoneNumbers, message) {
 }
 
 async function scrapeWhatsAppPhoneNumbers() {
-  //   await page.goto("https://web.whatsapp.com");
   await page.waitForSelector("div[role='grid']", { timeout: 60000 });
   await page.hover("div[role='grid']"); // hover on chat list pane
 
@@ -122,7 +127,9 @@ app.get("/scrape-contacts", async (req, res) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "http://localhost:3000" }, // your Next.js frontend port
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  },
 });
 
 io.on("connection", (socket) => {
@@ -131,41 +138,58 @@ io.on("connection", (socket) => {
   socket.on("start-stream", async ({ url }) => {
     console.log("Starting Puppeteer stream:", url);
 
-    browser = await launch({
-      headless: false,
-      executablePath: puppeteer.executablePath(),
-    });
-    page = await browser.newPage();
-    await page.goto(url);
+    try {
+      browser = await launch({
+        headless: false,
+        executablePath: puppeteer.executablePath(),
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--single-process",
+          "--disable-gpu",
+        ],
+      });
 
-    stream = await getStream(page, {
-      audio: false,
-      video: true,
-      mimeType: "video/webm; codecs=vp8",
-    });
+      page = await browser.newPage();
+      await page.goto(url);
 
-    stream.on("data", (chunk) => {
-      socket.emit("video-stream", chunk);
-    });
+      stream = await getStream(page, {
+        audio: false,
+        video: true,
+        mimeType: "video/webm; codecs=vp8",
+      });
 
-    stream.on("error", async (err) => {
-      console.error("Stream error:", err);
-      if (browser) {
-        await browser.close();
-        browser = null;
-      }
-      socket.emit("stream-ended");
-    });
+      stream.on("data", (chunk) => {
+        socket.emit("video-stream", chunk);
+      });
 
-    stream.on("end", async () => {
-      console.log("Stream ended normally");
-      if (browser) {
-        await browser.close();
-        browser = null;
-      }
-      socket.emit("stream-ended");
-    });
+      stream.on("error", async (err) => {
+        console.error("Stream error:", err);
+        if (browser) {
+          await browser.close();
+          browser = null;
+        }
+        socket.emit("stream-ended");
+      });
+
+      stream.on("end", async () => {
+        console.log("Stream ended normally");
+        if (browser) {
+          await browser.close();
+          browser = null;
+        }
+        socket.emit("stream-ended");
+      });
+    } catch (error) {
+      console.error("Error starting browser:", error);
+      socket.emit("stream-error", { message: error.message });
+    }
   });
+
   socket.on("disconnect", async () => {
     console.log("Frontend disconnected:", socket.id);
     if (browser) {
@@ -175,6 +199,8 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(4000, () => {
-  console.log("Server is running on http://localhost:4000");
+// Use the PORT environment variable that Render provides
+const PORT = process.env.PORT || 4000;
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });

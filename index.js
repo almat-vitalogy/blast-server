@@ -8,7 +8,7 @@ require("dotenv").config();
 
 const app = express();
 
-app.use(cors());
+// app.use(cors());
 app.use(express.json());
 let browser;
 let stream;
@@ -16,7 +16,7 @@ let page;
 
 // Add a simple route for health check
 app.get("/", (req, res) => {
-  res.send("Server is running");
+  res.send("Server is running 1");
 });
 
 const delay = (min, max) => {
@@ -127,10 +127,11 @@ app.get("/scrape-contacts", async (req, res) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: "*",
-  },
+  // cors: {
+  //   origin: "*",
+  //   methods: "*",
+  // },
+  path: "/socket.io",
 });
 
 io.on("connection", (socket) => {
@@ -159,9 +160,21 @@ io.on("connection", (socket) => {
       await page.goto(url);
 
       stream = await getStream(page, {
-        audio: false,
+        audio: false, // no audio to reduce complexity
         video: true,
         mimeType: "video/webm; codecs=vp8",
+        videoBitsPerSecond: 2000000, // lower bitrate (2 Mbps) improves stability significantly
+        frameSize: 200, // larger frame size = fewer chunks per second, but more stable and less CPU-intensive
+        videoConstraints: {
+          mandatory: {
+            minWidth: 1024,
+            minHeight: 576,
+            maxWidth: 1024,
+            maxHeight: 576,
+            maxFrameRate: 30, // lower FPS greatly improves stability
+            minFrameRate: 25,
+          },
+        },
       });
 
       stream.on("data", (chunk) => {
@@ -193,6 +206,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", async () => {
     console.log("Frontend disconnected:", socket.id);
+    console.log("Stream ended abnormally");
     if (browser) {
       await browser.close();
       browser = null;
@@ -202,6 +216,11 @@ io.on("connection", (socket) => {
 
 // Use the PORT environment variable that Render provides
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+server
+  .listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  })
+  .on("error", (err) => {
+    console.error("Server error:", err);
+    ``;
+  });

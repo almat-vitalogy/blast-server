@@ -1,10 +1,14 @@
+require("dotenv").config();
+
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
 const { getStream, launch } = require("puppeteer-stream");
-require("dotenv").config();
+const { OpenAI } = require("openai");
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 
@@ -14,7 +18,7 @@ let browser;
 let stream;
 let page;
 
-// Add a simple route for health check
+// Add a simple route for health check minor change
 app.get("/", (req, res) => {
   res.send("Server is running 1");
 });
@@ -124,14 +128,58 @@ app.get("/scrape-contacts", async (req, res) => {
   }
 });
 
+app.post("/message-composer/generate", async (req, res) => {
+  const { goal, clientName, policyType, expiryDate } = req.body;
+  if (!goal) return res.status(400).send("Message goal is required.");
+
+  const prompt = `
+  You are an assistant helping AIA insurance agents craft personalized client messages.
+  Please generate a professional and friendly WhatsApp message based on the following:
+  
+  - Goal: ${goal}
+  ${clientName ? `- Client Name: ${clientName}` : ""}
+  ${policyType ? `- Policy Type: ${policyType}` : ""}
+  ${expiryDate ? `- Expiry Date: ${expiryDate}` : ""}
+  
+  The message should be polite, clear, and encourage client engagement. Avoid sounding robotic.
+  `;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a professional message assistant for AIA insurance agents. Your job is to generate polite, clear, and helpful client messages for WhatsApp or SMS, based on the agent's goal.",
+        },
+        {
+          role: "user",
+          content: `Goal: ${prompt}`,
+        },
+      ],
+      temperature: 0.7,
+    });
+
+    const message = completion.choices[0].message.content;
+    console.log("📨 AI Generated message:", message);
+    res.json({ message });
+  } catch (error) {
+    console.error("❌ Error generating AI message:", error);
+    res.status(500).send("Failed to generate message.");
+  }
+});
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  // cors: {
-  //   origin: "*",
-  //   methods: "*",
-  // },
-  path: "/socket.io",
+  cors: {
+    // origin: "*",
+    // methods: "*",
+  },
+  // path: "/socket.io",
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 io.on("connection", (socket) => {
@@ -154,6 +202,10 @@ io.on("connection", (socket) => {
           "--single-process",
           "--disable-gpu",
         ],
+        env: {
+          ...process.env,
+          DISPLAY: ":99", // <== force Puppeteer to use the virtual display
+        },
       });
 
       page = await browser.newPage();
@@ -222,5 +274,4 @@ server
   })
   .on("error", (err) => {
     console.error("Server error:", err);
-    ``;
   });

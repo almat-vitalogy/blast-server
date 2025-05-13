@@ -5,7 +5,7 @@ module.exports = {
       script: "index.js",
       cwd: "/home/ubuntu/Documents/deal-maker/server",
       env: {
-        PORT: 4000,
+        PORT: 5001,
         DISPLAY: ":99",
       },
       interpreter: "node",

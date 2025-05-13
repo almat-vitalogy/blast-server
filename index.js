@@ -6,8 +6,10 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
 const { getStream, launch } = require("puppeteer-stream");
-const { OpenAI } = require("openai");
 
+const mongoose = require("mongoose");
+
+const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
@@ -17,6 +19,16 @@ app.use(express.json());
 let browser;
 let stream;
 let page;
+
+// mongo db connection
+const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
+
+mongoose
+  .connect(MONGODB_URI, {
+    dbName: "dealmaker",
+  })
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // Add a simple route for health check minor change
 app.get("/", (req, res) => {

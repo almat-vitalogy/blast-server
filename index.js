@@ -14,21 +14,138 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 
-// app.use(cors());
+const corsOptions = {
+  origin: "*", // Or specify your frontend origin like "http://localhost:3002"
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+// app.use(cors(corsOptions));
+// app.options("*", cors(corsOptions)); // handle preflight
 app.use(express.json());
 let browser;
 let stream;
 let page;
 
-// mongo db connection
+// ======================================================Mongo DB========================================================
+// MongoDB connection
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
 
 mongoose
-  .connect(MONGODB_URI, {
-    dbName: "dealmaker",
-  })
+  .connect(MONGODB_URI, { dbName: "dealmaker" })
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
+
+// Simple route for health check
+app.get("/", (req, res) => res.send("Server is running 1"));
+
+// New MongoDB API endpoints (added clearly here)
+const Dashboard = require("./models/Dashboard");
+const BlastDashboard = require("./models/BlastDashboard");
+const ActivityFeed = require("./models/ActivityFeed");
+
+// ✅ Dashboard API
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    console.log("🚩 Fetching Dashboard Data...");
+    const data = await Dashboard.findOne({});
+    console.log("✅ Dashboard Data:", data);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ Error fetching Dashboard data:", err);
+    res.status(500).json({ error: "Failed to fetch dashboard data" });
+  }
+});
+
+// ✅ Blast Dashboard API
+app.get("/api/blast-dashboard", async (req, res) => {
+  try {
+    console.log("🚩 Fetching Blast Dashboard Data...");
+    const data = await BlastDashboard.findOne({});
+    console.log("✅ Blast Dashboard Data:", data);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ Error fetching Blast Dashboard data:", err);
+    res.status(500).json({ error: "Failed to fetch blast dashboard data" });
+  }
+});
+
+// // Temporary route for seeding BlastDashboard data
+// app.get('/seed-blast-dashboard', async (req, res) => {
+//   try {
+//     const seedData = {
+//       blasts: [
+//         {
+//           title: "🎉 Birthday Promo",
+//           sent: 120,
+//           delivered: 115,
+//           failed: 5,
+//           date: "2025-04-29 15:00",
+//         },
+//         {
+//           title: "💬 Follow-up Message",
+//           sent: 98,
+//           delivered: 97,
+//           failed: 1,
+//           date: "2025-04-28 18:30",
+//         },
+//       ],
+//     };
+
+//     const result = await BlastDashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
+//     console.log("✅ BlastDashboard data seeded successfully:", result);
+//     res.json(result);
+//   } catch (err) {
+//     console.error("❌ Error seeding BlastDashboard data:", err);
+//     res.status(500).send("Error seeding BlastDashboard data");
+//   }
+// });
+
+// ✅ Activity Feed API
+app.get("/api/activity-feed", async (req, res) => {
+  try {
+    console.log("🚩 Fetching Activity Feed Data...");
+    const data = await ActivityFeed.findOne({});
+    console.log("✅ Activity Feed Data:", data);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ Error fetching Activity Feed data:", err);
+    res.status(500).json({ error: "Failed to fetch activity feed data" });
+  }
+});
+
+// // Temporary route for seeding Dashboard data
+// app.get('/seed-dashboard', async (req, res) => {
+//   try {
+//     const seedData = {
+//       totalContacts: 1250,
+//       messagesSent: 1234,
+//       scheduledBlasts: 45678,
+//       successRate: 4.5,
+//       recentBlasts: [
+//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
+//         { title: "Policy Reminder", status: "Completed", sent: 74, failed: 1, date: "Jan 10, 2025" },
+//         { title: "Valentine Promo", status: "Scheduled", sent: 0, failed: 0, date: "Feb 1, 2025" },
+//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
+//       ],
+//       recentActivity: [
+//         { icon: "CheckCircle", text: "Birthday greetings sent to 50 clients", time: "10 minutes ago" },
+//         { icon: "RefreshCcw", text: 'Contact list "VIP Clients" updated', time: "1 hour ago" },
+//         { icon: "XCircle", text: "WhatsApp session expired", time: "3 hours ago" },
+//         { icon: "Clock", text: "Scheduled renewal reminders for tomorrow", time: "5 hours ago" },
+//       ]
+//     };
+
+//     const result = await Dashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
+//     console.log("✅ Dashboard data seeded successfully:", result);
+//     res.json(result);
+//   } catch (err) {
+//     console.error("❌ Error seeding Dashboard data:", err);
+//     res.status(500).send("Error seeding Dashboard data");
+//   }
+// });
+
+// ======================================================Mongo DB========================================================
 
 // Add a simple route for health check minor change
 app.get("/", (req, res) => {
@@ -185,10 +302,10 @@ app.post("/message-composer/generate", async (req, res) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    // origin: "*",
-    // methods: "*",
-  },
+  // cors: {
+  //   // origin: "*",
+  //   // methods: "*",
+  // },
   // path: "/socket.io",
   pingTimeout: 60000,
   pingInterval: 25000,

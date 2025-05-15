@@ -105,7 +105,7 @@ app.get("/api/blast-dashboard", async (req, res) => {
 app.get("/api/activity-feed", async (req, res) => {
   try {
     console.log("🚩 Fetching Activity Feed Data...");
-    const data = await ActivityFeed.findOne({});
+    const data = await ActivityFeed.find().sort({ _id: -1 }).limit(20); 
     console.log("✅ Activity Feed Data:", data);
     res.json(data);
   } catch (err) {
@@ -113,6 +113,71 @@ app.get("/api/activity-feed", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch activity feed data" });
   }
 });
+
+// ✅ Add Activity Feed item (New API for adding items individually)
+app.post("/api/activity-feed", async (req, res) => {
+  const { icon, title, description, timestamp } = req.body;
+  if (!icon || !title || !description || !timestamp) {
+    return res.status(400).json({ error: "All fields required." });
+  }
+
+  try {
+    const newActivity = new ActivityFeed({ icon, title, description, timestamp });
+    await newActivity.save();
+    res.status(201).json(newActivity);
+  } catch (err) {
+    console.error("❌ Error adding activity feed item:", err);
+    res.status(500).json({ error: "Failed to add activity feed item" });
+  }
+});
+
+// app.get('/seed-activity-feed', async (req, res) => {
+//   const seedData = [
+//     {
+//       icon: "Send",
+//       title: "Message Sent",
+//       description: "Blast message '🎉 Birthday Promo' sent to 120 contacts.",
+//       timestamp: "2 mins ago"
+//     },
+//     {
+//       icon: "PlusCircle",
+//       title: "New Contact Added",
+//       description: "Manually added contact: Jane Chan (+852 9876 5432).",
+//       timestamp: "15 mins ago"
+//     },
+//     {
+//       icon: "RefreshCcw",
+//       title: "Reconnected",
+//       description: "WhatsApp session reconnected successfully.",
+//       timestamp: "1 hour ago"
+//     },
+//     {
+//       icon: "MessageSquare",
+//       title: "Template Saved",
+//       description: "Saved new template: '💬 Follow-up Reminder'",
+//       timestamp: "2 hours ago"
+//     },
+//     {
+//       icon: "CheckCircle2",
+//       title: "Sync Complete",
+//       description: "Google Sheet import completed without issues.",
+//       timestamp: "Yesterday"
+//     },
+//     {
+//       icon: "XCircle",
+//       title: "Send Failed",
+//       description: "Blast message 'Promo Alert' failed for 3 contacts.",
+//       timestamp: "2 days ago"
+//     }
+//   ];
+
+//   try {
+//     await ActivityFeed.insertMany(seedData);
+//     res.status(200).json({ success: true });
+//   } catch (err) {
+//     res.status(500).json({ error: "Seeding failed" });
+//   }
+// });
 
 // // Temporary route for seeding Dashboard data
 // app.get('/seed-dashboard', async (req, res) => {

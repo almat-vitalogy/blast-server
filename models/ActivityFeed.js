@@ -1,12 +1,10 @@
 const mongoose = require('mongoose');
 
 const ActivityFeedSchema = new mongoose.Schema({
-  activities: [{
-    icon: String,    // e.g. 'Send', 'PlusCircle', etc.
-    title: String,
-    description: String,
-    timestamp: String  // or Date
-  }]
-}, { timestamps: true });
+  icon: String,
+  title: String,
+  description: String,
+  timestamp: String
+});
 
 module.exports = mongoose.model('ActivityFeed', ActivityFeedSchema);

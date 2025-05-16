@@ -53,6 +53,10 @@ async function initWTS(userId) {
   };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ------------------ Routes ---------------------
 app.get("/", (req, res) => res.send("Server is running 1"));
 
@@ -200,9 +204,15 @@ app.post("/send-message", async (req, res) => {
 
   for (const phoneNumber of phoneNumbers) {
     try {
-      // Step 1: Go to chat
-      const chatUrl = `https://web.whatsapp.com/send?phone=${phoneNumber}`;
-      await page.goto(chatUrl, { waitUntil: "networkidle2" });
+      // Step 1: Go to WTS
+      const whatsappUrl = "https://web.whatsapp.com";
+      await page.goto(whatsappUrl, { waitUntil: "networkidle2" });
+
+      await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 10000 });
+      const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
+      await page.focus(searchBarSelector);
+      await page.type(searchBarSelector, phoneNumber);
+      await page.keyboard.press("Enter");
 
       // Step 2: Wait for chat input
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
@@ -214,11 +224,78 @@ app.post("/send-message", async (req, res) => {
       await page.keyboard.press("Enter");
 
       console.log(`✅ Message sent to ${phoneNumber}: ${message}`);
-      return res.status(200).json({ success: true });
     } catch (error) {
       console.error("❌ Failed to send message:", error);
       return res.status(500).json({ error: "Failed to send message" });
     }
+  }
+  return res.status(200).json({ success: true });
+});
+
+app.post("/scrape-contacts", async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  const user = users[userId];
+  if (!user || !user.page) {
+    return res.status(404).json({ error: "User session not found" });
+  }
+
+  const page = user.page;
+
+  try {
+    await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
+    await page.waitForSelector("div[role='grid']", { timeout: 60000 });
+    await page.hover("div[role='grid']");
+
+    const phoneNumbersSet = new Set();
+
+    for (let i = 0; i < 20; i++) {
+      await page.mouse.wheel({ deltaY: 1280 });
+      await delay(1000);
+
+      const numbers = await page.$$eval("div[role='grid'] > div", (nodes) => {
+        const result = [];
+
+        nodes.forEach((el) => {
+          const isGroup = !!el.querySelector('span[data-icon="default-group"]') || !!el.querySelector('span[data-icon="default-user-group"]');
+          if (isGroup) return;
+
+          const chatDiv = el.querySelector("[data-id]");
+          if (chatDiv) {
+            const dataId = chatDiv.getAttribute("data-id");
+            const match = dataId && dataId.match(/(\d+)@c\.us/);
+            if (match) {
+              result.push(match[1]);
+              return;
+            }
+          }
+
+          const spans = el.querySelectorAll("span");
+          for (const span of spans) {
+            const text = span.textContent;
+            if (/^\+?\d[\d\s-]{8,}$/.test(text)) {
+              result.push(text.replace(/\s+/g, ""));
+              return;
+            }
+          }
+        });
+
+        return result;
+      });
+
+      numbers.forEach((n) => phoneNumbersSet.add(n));
+    }
+
+    const phoneNumbers = Array.from(phoneNumbersSet);
+    console.log(`📥 Scraped ${phoneNumbers.length} phone numbers`);
+    res.status(200).json({ phoneNumbers });
+  } catch (error) {
+    console.error("❌ Failed to scrape contacts:", error);
+    res.status(500).json({ error: "Failed to scrape contacts" });
   }
 });
 

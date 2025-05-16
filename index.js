@@ -61,12 +61,58 @@ app.get("/api/dashboard", async (req, res) => {
 app.get("/api/blast-dashboard", async (req, res) => {
   try {
     console.log("🚩 Fetching Blast Dashboard Data...");
-    const data = await BlastDashboard.findOne({});
+    const data = await BlastDashboard.find().sort({ _id: -1 }).limit(20);
     console.log("✅ Blast Dashboard Data:", data);
     res.json(data);
   } catch (err) {
     console.error("❌ Error fetching Blast Dashboard data:", err);
     res.status(500).json({ error: "Failed to fetch blast dashboard data" });
+  }
+});
+
+// ✅ Add Blast Dashboard item (New API)
+app.post("/api/blast-dashboard", async (req, res) => {
+  const { title, sent, delivered, failed, date } = req.body;
+  if (!title || sent == null || delivered == null || failed == null || !date) {
+    return res.status(400).json({ error: "All fields required." });
+  } 
+
+  try {
+    const newBlast = new BlastDashboard({ title, sent, delivered, failed, date });
+    await newBlast.save();
+    res.status(201).json(newBlast);
+  } catch (err) {
+    console.error("❌ Error adding Blast Dashboard item:", err);
+    res.status(500).json({ error: "Failed to add blast dashboard item" });
+  }
+});
+
+// ✅ Seed route for updated schema
+app.get('/seed-blast-dashboard', async (req, res) => {
+  const seedData = [
+    {
+      title: '🎉 Birthday Promo',
+      sent: 120,
+      delivered: 115,
+      failed: 5,
+      date: '2025-04-29 15:00'
+    },
+    {
+      title: '💬 Follow-up Message',
+      sent: 98,
+      delivered: 97,
+      failed: 1,
+      date: '2025-04-28 18:30'
+    }
+  ];
+
+  try {
+    await BlastDashboard.insertMany(seedData);
+    console.log("✅ Blast Dashboard seeded successfully");
+    res.status(200).json({ success: true, seededCount: seedData.length });
+  } catch (err) {
+    console.error("❌ Error seeding Blast Dashboard:", err);
+    res.status(500).json({ error: "Seeding failed" });
   }
 });
 

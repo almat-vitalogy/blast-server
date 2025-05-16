@@ -12,7 +12,6 @@ const DashboardSchema = new mongoose.Schema({
     status: String,
     sent: Number,
     failed: Number,
-    // e.g. date or completed could be included
   }],
 
   recentActivity: [{

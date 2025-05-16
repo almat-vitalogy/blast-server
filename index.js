@@ -17,13 +17,6 @@ app.use(express.json());
 app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
-// ======================================================Mongo DB========================================================
-const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
-
-mongoose
-  .connect(MONGODB_URI, { dbName: "dealmaker" })
-  .then(() => console.log("✅ MongoDB connected successfully"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // ------------------ Storage --------------------
 const users = {};
@@ -62,6 +55,15 @@ async function initWTS(userId) {
 
 // ------------------ Routes ---------------------
 app.get("/", (req, res) => res.send("Server is running 1"));
+
+
+// ======================================================Mongo DB========================================================
+const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
+
+mongoose
+  .connect(MONGODB_URI, { dbName: "dealmaker" })
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // ✅ Dashboard API
 app.get("/api/dashboard", async (req, res) => {
@@ -127,6 +129,7 @@ app.get("/api/activity-feed", async (req, res) => {
   }
 });
 
+// ======================================================Mongo DB========================================================
 app.post("/connect-user", async (req, res) => {
   const userId = uuidv4();
   const { browser, page, qrCodeUrl } = await initWTS(userId);

@@ -5,20 +5,19 @@ const http = require("http");
 const cors = require("cors");
 const puppeteer = require("puppeteer");
 const mongoose = require("mongoose");
-
 const fs = require("fs");
 const path = require("path");
+const BlastMessage = require("./models/BlastMessage"); // keep it 
 const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
 app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 // ======================================================Mongo DB========================================================
-// MongoDB connection
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
 
 mongoose
@@ -101,7 +100,6 @@ app.get("/api/dashboard", async (req, res) => {
   }
 });
 
-
 // 🚩 Blast Dashboard (Blast messages only, simplified) 
 app.get("/api/blast-dashboard", async (req, res) => {
   try {
@@ -116,24 +114,7 @@ app.get("/api/blast-dashboard", async (req, res) => {
 });
 
 // ✅ Add Activity Feed item (New API for adding items individually) 
-app.post("/api/activity-feed", async (req, res) => {
-  const { icon, title, description, timestamp } = req.body;
-  if (!icon || !title || !description || !timestamp) {
-    return res.status(400).json({ error: "All fields required." });
-  }
-
-  try {
-    const newActivity = new ActivityFeed({ icon, title, description, timestamp });
-    await newActivity.save();
-    res.status(201).json(newActivity);
-  } catch (err) {
-    console.error("❌ Error adding activity feed item:", err);
-    res.status(500).json({ error: "Failed to add activity feed item" });
-  }
-});
-
-// API to get blast messages for Activity Feed
-app.get("/api/blast-messages", async (req, res) => {
+app.get("/api/activity-feed", async (req, res) => {
   try {
     const data = await BlastMessage.find({})
       .sort({ date: -1 })
@@ -145,9 +126,6 @@ app.get("/api/blast-messages", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch blast messages" });
   }
 });
-
-const BlastMessage = require("./models/BlastMessage"); // keep it 
-
 
 app.post("/connect-user", async (req, res) => {
   const userId = uuidv4();
@@ -225,7 +203,7 @@ app.post("/send-message", async (req, res) => {
 
       // Step 2: Wait for chat input
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
-      await page.waitForSelector(inputSelector, { timeout: 10000 });
+      await page.waitForSelector(inputSelector, { timeout: 30000 });
 
       // Step 3: Focus input and type message
       await page.focus(inputSelector);

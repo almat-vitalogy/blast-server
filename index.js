@@ -39,16 +39,35 @@ mongoose
 // Simple route for health check
 app.get("/", (req, res) => res.send("Server is running 1"));
 
-// New MongoDB API endpoints (added clearly here)
-const Dashboard = require("./models/Dashboard");
-const BlastDashboard = require("./models/BlastDashboard");
-const ActivityFeed = require("./models/ActivityFeed");
-
 // ✅ Dashboard API
 app.get("/api/dashboard", async (req, res) => {
   try {
     console.log("🚩 Fetching Dashboard Data...");
-    const data = await Dashboard.findOne({});
+    
+    // Fetch recent blasts from BlastMessage collection
+    const recentBlasts = await BlastMessage.find({ status: { $ne: "System" } })
+      .sort({ date: -1 })
+      .limit(5)
+      .select('title sent delivered failed date status');
+
+    // Fetch recent activities from BlastMessage collection
+    const recentActivitiesRaw = await BlastMessage.find({}).sort({ "activity.timestamp": -1 }).limit(5);
+    
+    const recentActivity = recentActivitiesRaw.map(item => ({
+      icon: item.activity.icon,
+      description: item.activity.description,
+      timestamp: item.activity.timestamp,
+    }));
+
+    const data = {
+      totalContacts: 1250,
+      messagesSent: 1234,
+      scheduledBlasts: 45678,
+      successRate: 4.5,
+      recentBlasts,
+      recentActivity,
+    };
+
     console.log("✅ Dashboard Data:", data);
     res.json(data);
   } catch (err) {
@@ -57,110 +76,21 @@ app.get("/api/dashboard", async (req, res) => {
   }
 });
 
-// ✅ Blast Dashboard API
+
+// 🚩 Blast Dashboard (Blast messages only, simplified) 
 app.get("/api/blast-dashboard", async (req, res) => {
   try {
-    console.log("🚩 Fetching Blast Dashboard Data...");
-    const data = await BlastDashboard.find().sort({ _id: -1 }).limit(20);
-    console.log("✅ Blast Dashboard Data:", data);
+    const data = await BlastMessage.find({ status: { $ne: "System" } })
+      .sort({ date: -1 }).limit(20)
+      .select("title sent delivered failed date status");
+      
     res.json(data);
   } catch (err) {
-    console.error("❌ Error fetching Blast Dashboard data:", err);
     res.status(500).json({ error: "Failed to fetch blast dashboard data" });
   }
 });
 
-// ✅ Add Blast Dashboard item (New API)
-app.post("/api/blast-dashboard", async (req, res) => {
-  const { title, sent, delivered, failed, date } = req.body;
-  if (!title || sent == null || delivered == null || failed == null || !date) {
-    return res.status(400).json({ error: "All fields required." });
-  } 
-
-  try {
-    const newBlast = new BlastDashboard({ title, sent, delivered, failed, date });
-    await newBlast.save();
-    res.status(201).json(newBlast);
-  } catch (err) {
-    console.error("❌ Error adding Blast Dashboard item:", err);
-    res.status(500).json({ error: "Failed to add blast dashboard item" });
-  }
-});
-
-// ✅ Seed route for updated schema
-app.get('/seed-blast-dashboard', async (req, res) => {
-  const seedData = [
-    {
-      title: '🎉 Birthday Promo',
-      sent: 120,
-      delivered: 115,
-      failed: 5,
-      date: '2025-04-29 15:00'
-    },
-    {
-      title: '💬 Follow-up Message',
-      sent: 98,
-      delivered: 97,
-      failed: 1,
-      date: '2025-04-28 18:30'
-    }
-  ];
-
-  try {
-    await BlastDashboard.insertMany(seedData);
-    console.log("✅ Blast Dashboard seeded successfully");
-    res.status(200).json({ success: true, seededCount: seedData.length });
-  } catch (err) {
-    console.error("❌ Error seeding Blast Dashboard:", err);
-    res.status(500).json({ error: "Seeding failed" });
-  }
-});
-
-// // Temporary route for seeding BlastDashboard data
-// app.get('/seed-blast-dashboard', async (req, res) => {
-//   try {
-//     const seedData = {
-//       blasts: [
-//         {
-//           title: "🎉 Birthday Promo",
-//           sent: 120,
-//           delivered: 115,
-//           failed: 5,
-//           date: "2025-04-29 15:00",
-//         },
-//         {
-//           title: "💬 Follow-up Message",
-//           sent: 98,
-//           delivered: 97,
-//           failed: 1,
-//           date: "2025-04-28 18:30",
-//         },
-//       ],
-//     };
-
-//     const result = await BlastDashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
-//     console.log("✅ BlastDashboard data seeded successfully:", result);
-//     res.json(result);
-//   } catch (err) {
-//     console.error("❌ Error seeding BlastDashboard data:", err);
-//     res.status(500).send("Error seeding BlastDashboard data");
-//   }
-// });
-
-// ✅ Activity Feed API
-app.get("/api/activity-feed", async (req, res) => {
-  try {
-    console.log("🚩 Fetching Activity Feed Data...");
-    const data = await ActivityFeed.find().sort({ _id: -1 }).limit(20); 
-    console.log("✅ Activity Feed Data:", data);
-    res.json(data);
-  } catch (err) {
-    console.error("❌ Error fetching Activity Feed data:", err);
-    res.status(500).json({ error: "Failed to fetch activity feed data" });
-  }
-});
-
-// ✅ Add Activity Feed item (New API for adding items individually)
+// ✅ Add Activity Feed item (New API for adding items individually) 
 app.post("/api/activity-feed", async (req, res) => {
   const { icon, title, description, timestamp } = req.body;
   if (!icon || !title || !description || !timestamp) {
@@ -177,84 +107,22 @@ app.post("/api/activity-feed", async (req, res) => {
   }
 });
 
-// app.get('/seed-activity-feed', async (req, res) => {
-//   const seedData = [
-//     {
-//       icon: "Send",
-//       title: "Message Sent",
-//       description: "Blast message '🎉 Birthday Promo' sent to 120 contacts.",
-//       timestamp: "2 mins ago"
-//     },
-//     {
-//       icon: "PlusCircle",
-//       title: "New Contact Added",
-//       description: "Manually added contact: Jane Chan (+852 9876 5432).",
-//       timestamp: "15 mins ago"
-//     },
-//     {
-//       icon: "RefreshCcw",
-//       title: "Reconnected",
-//       description: "WhatsApp session reconnected successfully.",
-//       timestamp: "1 hour ago"
-//     },
-//     {
-//       icon: "MessageSquare",
-//       title: "Template Saved",
-//       description: "Saved new template: '💬 Follow-up Reminder'",
-//       timestamp: "2 hours ago"
-//     },
-//     {
-//       icon: "CheckCircle2",
-//       title: "Sync Complete",
-//       description: "Google Sheet import completed without issues.",
-//       timestamp: "Yesterday"
-//     },
-//     {
-//       icon: "XCircle",
-//       title: "Send Failed",
-//       description: "Blast message 'Promo Alert' failed for 3 contacts.",
-//       timestamp: "2 days ago"
-//     }
-//   ];
+// API to get blast messages for Activity Feed
+app.get("/api/blast-messages", async (req, res) => {
+  try {
+    const data = await BlastMessage.find({})
+      .sort({ date: -1 })
+      .limit(20);
+    console.log("✅ Blast Messages fetched:", data);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ Error fetching blast messages:", err);
+    res.status(500).json({ error: "Failed to fetch blast messages" });
+  }
+});
 
-//   try {
-//     await ActivityFeed.insertMany(seedData);
-//     res.status(200).json({ success: true });
-//   } catch (err) {
-//     res.status(500).json({ error: "Seeding failed" });
-//   }
-// });
+const BlastMessage = require("./models/BlastMessage"); // keep it 
 
-// // Temporary route for seeding Dashboard data
-// app.get('/seed-dashboard', async (req, res) => {
-//   try {
-//     const seedData = {
-//       totalContacts: 1250,
-//       messagesSent: 1234,
-//       scheduledBlasts: 45678,
-//       successRate: 4.5,
-//       recentBlasts: [
-//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
-//         { title: "Policy Reminder", status: "Completed", sent: 74, failed: 1, date: "Jan 10, 2025" },
-//         { title: "Valentine Promo", status: "Scheduled", sent: 0, failed: 0, date: "Feb 1, 2025" },
-//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
-//       ],
-//       recentActivity: [
-//         { icon: "CheckCircle", text: "Birthday greetings sent to 50 clients", time: "10 minutes ago" },
-//         { icon: "RefreshCcw", text: 'Contact list "VIP Clients" updated', time: "1 hour ago" },
-//         { icon: "XCircle", text: "WhatsApp session expired", time: "3 hours ago" },
-//         { icon: "Clock", text: "Scheduled renewal reminders for tomorrow", time: "5 hours ago" },
-//       ]
-//     };
-
-//     const result = await Dashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
-//     console.log("✅ Dashboard data seeded successfully:", result);
-//     res.json(result);
-//   } catch (err) {
-//     console.error("❌ Error seeding Dashboard data:", err);
-//     res.status(500).send("Error seeding Dashboard data");
-//   }
-// });
 
 // ======================================================Mongo DB========================================================
 
@@ -515,3 +383,6 @@ server
   .on("error", (err) => {
     console.error("Server error:", err);
   });
+
+
+  

@@ -1,34 +1,23 @@
 require("dotenv").config();
-
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
-const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
-const { getStream, launch } = require("puppeteer-stream");
-
 const mongoose = require("mongoose");
-
+const Dashboard = require("./models/Dashboard");
+const BlastDashboard = require("./models/BlastDashboard");
+const ActivityFeed = require("./models/ActivityFeed");
+const fs = require("fs");
+const path = require("path");
+const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
-
-const corsOptions = {
-  origin: "*", // Or specify your frontend origin like "http://localhost:3002"
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-
-// app.use(cors(corsOptions));
-// app.options("*", cors(corsOptions)); // handle preflight
 app.use(express.json());
-let browser;
-let stream;
-let page;
+app.use(cors()); // allow cross-origin requests
+app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
-// ======================================================Mongo DB========================================================
-// MongoDB connection
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
 
 mongoose
@@ -36,15 +25,44 @@ mongoose
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// Simple route for health check
+// ------------------ Storage --------------------
+const users = {};
+
+// ------------------ Functions ------------------
+async function initWTS(userId) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-accelerated-2d-canvas", "--disable-gpu"],
+  });
+
+  const page = await browser.newPage();
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+
+  // Get the QR code
+  await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
+  await page.waitForSelector("canvas", { timeout: 60000 });
+  const qrCodeElement = await page.$("canvas");
+  const qrDir = path.join(__dirname, "public", "qrcodes");
+  if (!fs.existsSync(qrDir)) {
+    fs.mkdirSync(qrDir, { recursive: true });
+  }
+
+  const qrFilename = `qr-${userId}.png`;
+  const qrPath = path.join(qrDir, qrFilename);
+  await qrCodeElement?.screenshot({ path: qrPath });
+
+  console.log(`✅ QR code saved at /qrcodes/${qrFilename}`);
+
+  return {
+    browser,
+    page,
+    qrCodeUrl: `/qrcodes/${qrFilename}`, // ⬅️ Return this to the frontend
+  };
+}
+
+// ------------------ Routes ---------------------
 app.get("/", (req, res) => res.send("Server is running 1"));
 
-// New MongoDB API endpoints (added clearly here)
-const Dashboard = require("./models/Dashboard");
-const BlastDashboard = require("./models/BlastDashboard");
-const ActivityFeed = require("./models/ActivityFeed");
-
-// ✅ Dashboard API
 app.get("/api/dashboard", async (req, res) => {
   try {
     console.log("🚩 Fetching Dashboard Data...");
@@ -57,7 +75,6 @@ app.get("/api/dashboard", async (req, res) => {
   }
 });
 
-// ✅ Blast Dashboard API
 app.get("/api/blast-dashboard", async (req, res) => {
   try {
     console.log("🚩 Fetching Blast Dashboard Data...");
@@ -70,88 +87,10 @@ app.get("/api/blast-dashboard", async (req, res) => {
   }
 });
 
-// ✅ Add Blast Dashboard item (New API)
-app.post("/api/blast-dashboard", async (req, res) => {
-  const { title, sent, delivered, failed, date } = req.body;
-  if (!title || sent == null || delivered == null || failed == null || !date) {
-    return res.status(400).json({ error: "All fields required." });
-  } 
-
-  try {
-    const newBlast = new BlastDashboard({ title, sent, delivered, failed, date });
-    await newBlast.save();
-    res.status(201).json(newBlast);
-  } catch (err) {
-    console.error("❌ Error adding Blast Dashboard item:", err);
-    res.status(500).json({ error: "Failed to add blast dashboard item" });
-  }
-});
-
-// ✅ Seed route for updated schema
-app.get('/seed-blast-dashboard', async (req, res) => {
-  const seedData = [
-    {
-      title: '🎉 Birthday Promo',
-      sent: 120,
-      delivered: 115,
-      failed: 5,
-      date: '2025-04-29 15:00'
-    },
-    {
-      title: '💬 Follow-up Message',
-      sent: 98,
-      delivered: 97,
-      failed: 1,
-      date: '2025-04-28 18:30'
-    }
-  ];
-
-  try {
-    await BlastDashboard.insertMany(seedData);
-    console.log("✅ Blast Dashboard seeded successfully");
-    res.status(200).json({ success: true, seededCount: seedData.length });
-  } catch (err) {
-    console.error("❌ Error seeding Blast Dashboard:", err);
-    res.status(500).json({ error: "Seeding failed" });
-  }
-});
-
-// // Temporary route for seeding BlastDashboard data
-// app.get('/seed-blast-dashboard', async (req, res) => {
-//   try {
-//     const seedData = {
-//       blasts: [
-//         {
-//           title: "🎉 Birthday Promo",
-//           sent: 120,
-//           delivered: 115,
-//           failed: 5,
-//           date: "2025-04-29 15:00",
-//         },
-//         {
-//           title: "💬 Follow-up Message",
-//           sent: 98,
-//           delivered: 97,
-//           failed: 1,
-//           date: "2025-04-28 18:30",
-//         },
-//       ],
-//     };
-
-//     const result = await BlastDashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
-//     console.log("✅ BlastDashboard data seeded successfully:", result);
-//     res.json(result);
-//   } catch (err) {
-//     console.error("❌ Error seeding BlastDashboard data:", err);
-//     res.status(500).send("Error seeding BlastDashboard data");
-//   }
-// });
-
-// ✅ Activity Feed API
 app.get("/api/activity-feed", async (req, res) => {
   try {
     console.log("🚩 Fetching Activity Feed Data...");
-    const data = await ActivityFeed.find().sort({ _id: -1 }).limit(20); 
+    const data = await ActivityFeed.find().sort({ _id: -1 }).limit(20);
     console.log("✅ Activity Feed Data:", data);
     res.json(data);
   } catch (err) {
@@ -160,7 +99,6 @@ app.get("/api/activity-feed", async (req, res) => {
   }
 });
 
-// ✅ Add Activity Feed item (New API for adding items individually)
 app.post("/api/activity-feed", async (req, res) => {
   const { icon, title, description, timestamp } = req.body;
   if (!icon || !title || !description || !timestamp) {
@@ -177,194 +115,111 @@ app.post("/api/activity-feed", async (req, res) => {
   }
 });
 
-// app.get('/seed-activity-feed', async (req, res) => {
-//   const seedData = [
-//     {
-//       icon: "Send",
-//       title: "Message Sent",
-//       description: "Blast message '🎉 Birthday Promo' sent to 120 contacts.",
-//       timestamp: "2 mins ago"
-//     },
-//     {
-//       icon: "PlusCircle",
-//       title: "New Contact Added",
-//       description: "Manually added contact: Jane Chan (+852 9876 5432).",
-//       timestamp: "15 mins ago"
-//     },
-//     {
-//       icon: "RefreshCcw",
-//       title: "Reconnected",
-//       description: "WhatsApp session reconnected successfully.",
-//       timestamp: "1 hour ago"
-//     },
-//     {
-//       icon: "MessageSquare",
-//       title: "Template Saved",
-//       description: "Saved new template: '💬 Follow-up Reminder'",
-//       timestamp: "2 hours ago"
-//     },
-//     {
-//       icon: "CheckCircle2",
-//       title: "Sync Complete",
-//       description: "Google Sheet import completed without issues.",
-//       timestamp: "Yesterday"
-//     },
-//     {
-//       icon: "XCircle",
-//       title: "Send Failed",
-//       description: "Blast message 'Promo Alert' failed for 3 contacts.",
-//       timestamp: "2 days ago"
-//     }
-//   ];
+app.post("/api/activity-feed", async (req, res) => {
+  const { icon, title, description, timestamp } = req.body;
+  if (!icon || !title || !description || !timestamp) {
+    return res.status(400).json({ error: "All fields required." });
+  }
 
-//   try {
-//     await ActivityFeed.insertMany(seedData);
-//     res.status(200).json({ success: true });
-//   } catch (err) {
-//     res.status(500).json({ error: "Seeding failed" });
-//   }
-// });
-
-// // Temporary route for seeding Dashboard data
-// app.get('/seed-dashboard', async (req, res) => {
-//   try {
-//     const seedData = {
-//       totalContacts: 1250,
-//       messagesSent: 1234,
-//       scheduledBlasts: 45678,
-//       successRate: 4.5,
-//       recentBlasts: [
-//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
-//         { title: "Policy Reminder", status: "Completed", sent: 74, failed: 1, date: "Jan 10, 2025" },
-//         { title: "Valentine Promo", status: "Scheduled", sent: 0, failed: 0, date: "Feb 1, 2025" },
-//         { title: "New Year Greetings", status: "Completed", sent: 148, failed: 2, date: "Jan 1, 2025" },
-//       ],
-//       recentActivity: [
-//         { icon: "CheckCircle", text: "Birthday greetings sent to 50 clients", time: "10 minutes ago" },
-//         { icon: "RefreshCcw", text: 'Contact list "VIP Clients" updated', time: "1 hour ago" },
-//         { icon: "XCircle", text: "WhatsApp session expired", time: "3 hours ago" },
-//         { icon: "Clock", text: "Scheduled renewal reminders for tomorrow", time: "5 hours ago" },
-//       ]
-//     };
-
-//     const result = await Dashboard.findOneAndUpdate({}, seedData, { upsert: true, new: true });
-//     console.log("✅ Dashboard data seeded successfully:", result);
-//     res.json(result);
-//   } catch (err) {
-//     console.error("❌ Error seeding Dashboard data:", err);
-//     res.status(500).send("Error seeding Dashboard data");
-//   }
-// });
-
-// ======================================================Mongo DB========================================================
-
-// Add a simple route for health check minor change
-app.get("/", (req, res) => {
-  res.send("Server is running 1");
+  try {
+    const newActivity = new ActivityFeed({ icon, title, description, timestamp });
+    await newActivity.save();
+    res.status(201).json(newActivity);
+  } catch (err) {
+    console.error("❌ Error adding activity feed item:", err);
+    res.status(500).json({ error: "Failed to add activity feed item" });
+  }
 });
 
-const delay = (min, max) => {
-  // Generate a random delay between min and max milliseconds
-  const randomDelay = Math.floor(Math.random() * (max - min + 1)) + min;
-  return new Promise((resolve) => setTimeout(resolve, randomDelay));
-};
+app.post("/connect-user", async (req, res) => {
+  const userId = uuidv4();
+  const { browser, page, qrCodeUrl } = await initWTS(userId);
 
-async function sendWhatsAppMessage(phoneNumbers, message) {
-  for (let phoneNumber of phoneNumbers) {
-    await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 30000 });
-    await delay(1000, 2000);
-    const searchInput = await page.$('div[contenteditable="true"][data-tab="3"]');
-    for (const digit of phoneNumber) {
-      await searchInput.type(digit);
-      await delay(30, 100);
-    }
-    await delay(500, 1000);
-    await page.keyboard.press("Enter");
-    await page.waitForSelector('div[contenteditable="true"][data-tab="10"]', { timeout: 30000 });
-    await delay(1000, 2000);
-    const messageInput = await page.$('div[contenteditable="true"][data-tab="10"]');
-    for (const char of message) {
-      await messageInput.type(char);
-      await delay(30, 100);
-    }
-    await delay(500, 1000);
-    await page.keyboard.press("Enter");
-    await delay(500, 1000);
-  }
-}
+  users[userId] = {
+    userId,
+    status: "connected",
+    browser,
+    page,
+  };
 
-async function scrapeWhatsAppPhoneNumbers() {
-  await page.waitForSelector("div[role='grid']", { timeout: 60000 });
-  await page.hover("div[role='grid']"); // hover on chat list pane
+  console.log(`✅ Registered user: ${userId}`);
+  return res.status(201).json({ userId, qrCodeUrl });
+});
 
-  let phoneNumbersSet = new Set();
-  for (let i = 0; i < 20; i++) {
-    await page.mouse.wheel({ deltaY: 1280 }); // blast scroll
-    await delay(1000, 1500);
+app.post("/disconnect-user", async (req, res) => {
+  const { userId } = req.body;
 
-    const phoneNumbers = await page.$$eval("div[role='grid'] > div", (nodes) => {
-      return nodes
-        .map((el) => {
-          // Skip groups (groups typically have a group icon)
-          const isGroup = !!el.querySelector('span[data-icon="default-group"]') || !!el.querySelector('span[data-icon="default-user-group"]');
-
-          if (isGroup) return null;
-
-          // Try to find the phone number
-          // Look for the data-id attribute which often contains the phone number
-          const chatDiv = el.querySelector("[data-id]");
-          if (chatDiv) {
-            const dataId = chatDiv.getAttribute("data-id");
-            // Extract phone number from data-id (format is usually something like "1234567890@c.us")
-            const match = dataId && dataId.match(/(\d+)@c\.us/);
-            return match ? match[1] : null;
-          }
-
-          // Alternative approach: Look for specific spans with phone numbers
-          const spans = el.querySelectorAll("span");
-          for (const span of spans) {
-            // Phone numbers are often in the format +xx xxx xxx xxxx or similar
-            const text = span.textContent;
-            if (/^\+?\d[\d\s-]{8,}$/.test(text)) {
-              return text.replace(/\s+/g, ""); // Remove spaces
-            }
-          }
-
-          return null;
-        })
-        .filter(Boolean);
-    });
-
-    phoneNumbers.forEach((num) => phoneNumbersSet.add(num));
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
   }
 
-  const allPhoneNumbers = Array.from(phoneNumbersSet);
-  console.log("Phone numbers found:", allPhoneNumbers.length);
-  console.log(allPhoneNumbers);
-  return allPhoneNumbers;
-}
+  const user = users[userId];
+
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  try {
+    // Close the Puppeteer browser
+    if (user.browser && user.browser.process()) {
+      await user.browser.close();
+      console.log(`🧨 Browser closed for user ${userId}`);
+    }
+
+    // Delete QR code file
+    const qrPath = path.join(__dirname, "public", "qrcodes", `qr-${userId}.png`);
+    if (fs.existsSync(qrPath)) {
+      fs.unlinkSync(qrPath);
+      console.log(`🗑️ Deleted QR code: ${qrPath}`);
+    }
+
+    // Remove user from memory
+    delete users[userId];
+    console.log(`🧼 User ${userId} disconnected and cleaned up.`);
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error(`❌ Failed to disconnect user ${userId}:`, error);
+    return res.status(500).json({ error: "Failed to disconnect user" });
+  }
+});
 
 app.post("/send-message", async (req, res) => {
-  const { phones, message } = req.body;
-  if (!phones.length || !message) {
-    return res.status(400).send("Phone numbers and message are required.");
-  }
-  try {
-    await sendWhatsAppMessage(phones, message);
-    res.status(200).send("Message sent successfully.");
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).send("Failed to send message.");
-  }
-});
+  const { userId, phoneNumbers, message } = req.body;
 
-app.get("/scrape-contacts", async (req, res) => {
-  try {
-    const contacts = await scrapeWhatsAppPhoneNumbers();
-    res.status(200).json({ contacts });
-  } catch (err) {
-    console.error("Scrape error:", err);
-    res.status(500).send("Failed to scrape contacts.");
+  if (!userId || !Array.isArray(phoneNumbers) || phoneNumbers.length === 0 || !message) {
+    return res.status(400).json({ error: "Missing or invalid required fields" });
+  }
+
+  const user = users[userId];
+
+  if (!user || !user.page) {
+    return res.status(404).json({ error: "User session not found" });
+  }
+
+  const page = user.page;
+
+  for (const phoneNumber of phoneNumbers) {
+    try {
+      // Step 1: Go to chat
+      const chatUrl = `https://web.whatsapp.com/send?phone=${phoneNumber}`;
+      await page.goto(chatUrl, { waitUntil: "networkidle2" });
+
+      // Step 2: Wait for chat input
+      const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
+      await page.waitForSelector(inputSelector, { timeout: 10000 });
+
+      // Step 3: Focus input and type message
+      await page.focus(inputSelector);
+      await page.type(inputSelector, message);
+      await page.keyboard.press("Enter");
+
+      console.log(`✅ Message sent to ${phoneNumber}: ${message}`);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("❌ Failed to send message:", error);
+      return res.status(500).json({ error: "Failed to send message" });
+    }
   }
 });
 
@@ -410,108 +265,46 @@ app.post("/message-composer/generate", async (req, res) => {
   }
 });
 
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  // cors: {
-  //   // origin: "*",
-  //   // methods: "*",
-  // },
-  // path: "/socket.io",
-  pingTimeout: 60000,
-  pingInterval: 25000,
-});
-
-io.on("connection", (socket) => {
-  console.log("Frontend connected:", socket.id);
-
-  socket.on("start-stream", async ({ url }) => {
-    console.log("Starting Puppeteer stream:", url);
-
-    try {
-      browser = await launch({
-        headless: false,
-        executablePath: puppeteer.executablePath(),
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--single-process",
-          "--disable-gpu",
-        ],
-        env: {
-          ...process.env,
-          DISPLAY: ":99", // <== force Puppeteer to use the virtual display
-        },
-      });
-
-      page = await browser.newPage();
-      await page.goto(url);
-
-      stream = await getStream(page, {
-        audio: false, // no audio to reduce complexity
-        video: true,
-        mimeType: "video/webm; codecs=vp8",
-        videoBitsPerSecond: 2000000, // lower bitrate (2 Mbps) improves stability significantly
-        frameSize: 200, // larger frame size = fewer chunks per second, but more stable and less CPU-intensive
-        videoConstraints: {
-          mandatory: {
-            minWidth: 1024,
-            minHeight: 576,
-            maxWidth: 1024,
-            maxHeight: 576,
-            maxFrameRate: 30, // lower FPS greatly improves stability
-            minFrameRate: 25,
-          },
-        },
-      });
-
-      stream.on("data", (chunk) => {
-        socket.emit("video-stream", chunk);
-      });
-
-      stream.on("error", async (err) => {
-        console.error("Stream error:", err);
-        if (browser) {
-          await browser.close();
-          browser = null;
-        }
-        socket.emit("stream-ended");
-      });
-
-      stream.on("end", async () => {
-        console.log("Stream ended normally");
-        if (browser) {
-          await browser.close();
-          browser = null;
-        }
-        socket.emit("stream-ended");
-      });
-    } catch (error) {
-      console.error("Error starting browser:", error);
-      socket.emit("stream-error", { message: error.message });
-    }
-  });
-
-  socket.on("disconnect", async () => {
-    console.log("Frontend disconnected:", socket.id);
-    console.log("Stream ended abnormally");
-    if (browser) {
-      await browser.close();
-      browser = null;
-    }
-  });
-});
-
-// Use the PORT environment variable that Render provides
 const PORT = process.env.PORT || 5001;
-server
+http
+  .createServer(app)
   .listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
   })
   .on("error", (err) => {
     console.error("Server error:", err);
   });
+
+process.on("SIGINT", async () => {
+  console.log("\n🧹 Gracefully shutting down...");
+
+  for (const userId in users) {
+    const user = users[userId];
+    try {
+      if (user.browser && user.browser.process()) {
+        console.log(`Closing browser for user ${userId}`);
+        await user.browser.close();
+        delete users[userId];
+      }
+    } catch (err) {
+      console.error(`Error closing browser for ${userId}:`, err);
+    }
+  }
+
+  const qrDir = path.join(__dirname, "public", "qrcodes");
+  if (fs.existsSync(qrDir)) {
+    const files = fs.readdirSync(qrDir);
+    for (const file of files) {
+      const filePath = path.join(qrDir, file);
+      try {
+        fs.unlinkSync(filePath);
+        console.log(`🗑️ Deleted: ${file}`);
+      } catch (err) {
+        console.error(`⚠️ Failed to delete ${file}:`, err);
+      }
+    }
+  }
+
+  console.log("✅ Cleanup complete. Exiting.");
+  process.exit(0);
+});

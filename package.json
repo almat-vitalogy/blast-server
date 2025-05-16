@@ -17,6 +17,7 @@
     "openai": "^4.96.2",
     "puppeteer": "^24.7.1",
     "puppeteer-stream": "^3.0.20",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
   }
 }

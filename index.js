@@ -7,6 +7,7 @@ const puppeteer = require("puppeteer");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const Contact = require("./models/Contact");
 const BlastMessage = require("./models/BlastMessage"); // keep it 
 const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
@@ -61,7 +62,7 @@ function delay(ms) {
 app.get("/", (req, res) => res.send("Server is running 1"));
 
 
-// ======================================================Mongo DB========================================================
+// ====================================================== 1. Mongo DB: fetch data for: dashboard, blast-dashboard, activity-feed ========================================================
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
 
 mongoose
@@ -130,6 +131,49 @@ app.get("/api/activity-feed", async (req, res) => {
   } catch (err) {
     console.error("❌ Error fetching blast messages:", err);
     res.status(500).json({ error: "Failed to fetch blast messages" });
+  }
+});
+
+// ====================================================== 2. Mongo DB: [Contact CRUD Routes]: add-contacts, delete-contacts ========================================================
+app.post("/api/add-contacts", async (req, res) => {
+  const { phone, name } = req.body;
+
+  if (!phone) return res.status(400).json({ error: "Phone is required" });
+
+  try {
+    const newContact = new Contact({ phone, name: name || phone });
+    await newContact.save();
+    console.log(`✅ Contact added: ${phone}`);
+    res.status(201).json(newContact);
+  } catch (err) {
+    console.error("❌ Error adding contact:", err);
+    res.status(500).json({ error: "Failed to add contact" });
+  }
+});
+
+// 🚩 Delete a Contact by phone
+app.delete("/api/delete-contacts/:phone", async (req, res) => {
+  const { phone } = req.params;
+
+  try {
+    const deleted = await Contact.findOneAndDelete({ phone });
+    if (!deleted) return res.status(404).json({ error: "Contact not found" });
+
+    console.log(`🗑️ Contact deleted: ${phone}`);
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("❌ Error deleting contact:", err);
+    res.status(500).json({ error: "Failed to delete contact" });
+  }
+});
+
+app.get("/api/get-contacts", async (req, res) => {
+  try {
+    const contacts = await Contact.find({});
+    res.json(contacts);
+  } catch (err) {
+    console.error("❌ Error fetching contacts:", err);
+    res.status(500).json({ error: "Failed to fetch contacts" });
   }
 });
 

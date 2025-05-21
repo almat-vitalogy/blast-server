@@ -7,17 +7,15 @@ const puppeteer = require("puppeteer");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
-const Contact = require("./models/Contact");
-const BlastMessage = require("./models/BlastMessage"); // keep it 
+const Agent = require("./models/Agents");
 const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
-app.use(cors()); // allow cross-origin requests
+// app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
-
 
 // ------------------ Storage --------------------
 const users = {};
@@ -61,7 +59,6 @@ function delay(ms) {
 // ------------------ Routes ---------------------
 app.get("/", (req, res) => res.send("Server is running 1"));
 
-
 // ====================================================== 1. Mongo DB: fetch data for: dashboard, blast-dashboard, activity-feed ========================================================
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
 
@@ -70,69 +67,173 @@ mongoose
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// ✅ Dashboard API
-app.get("/api/dashboard", async (req, res) => {
+// ================================================================================== 🚩 Dynamic Dashboard (Agent-specific) ================================================================================== 
+
+
+// 🚩 Updated Dashboard Route (Dynamic, agent-specific)
+app.get("/api/dashboard/:agentPhone", async (req, res) => {
+  const { agentPhone } = req.params;
+
   try {
-    console.log("🚩 Fetching Dashboard Data...");
-    
-    // Fetch recent blasts from BlastMessage collection
-    const recentBlasts = await BlastMessage.find({ status: { $ne: "System" } })
-      .sort({ date: -1 })
-      .limit(5)
-      .select('title sent delivered failed date status');
+    const agent = await Agent.findOne({ phone: agentPhone });
 
-    // Fetch recent activities from BlastMessage collection
-    const recentActivitiesRaw = await BlastMessage.find({}).sort({ "activity.timestamp": -1 }).limit(5);
-    
-    const recentActivity = recentActivitiesRaw.map(item => ({
-      icon: item.activity.icon,
-      description: item.activity.description,
-      timestamp: item.activity.timestamp,
-    }));
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
 
-    const data = {
-      totalContacts: 1250,
-      messagesSent: 1234,
-      scheduledBlasts: 45678,
-      successRate: 4.5,
+    const recentBlasts = agent.blastMessages
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 5);
+
+    const recentActivity = agent.activities
+      .sort((a, b) => new Date(b.datetime) - new Date(a.datetime))
+      .slice(0, 5)
+      .map((activity) => ({
+        icon: mapActionToIcon(activity.action),
+        description: activity.action,
+        timestamp: new Date(activity.datetime).toISOString(),
+      }));
+
+    const totalDelivered = agent.blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
+    const totalSent = agent.blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
+    const successRate = totalSent ? ((totalDelivered / totalSent) * 100).toFixed(2) : 0;
+
+    const dashboardData = {
+      totalContacts: agent.contacts.length,
+      successRate: parseFloat(successRate),
       recentBlasts,
       recentActivity,
+      blastMessages: agent.blastMessages, 
     };
 
-    console.log("✅ Dashboard Data:", data);
-    res.json(data);
+    res.json(dashboardData);
   } catch (err) {
     console.error("❌ Error fetching Dashboard data:", err);
     res.status(500).json({ error: "Failed to fetch dashboard data" });
   }
 });
 
-// 🚩 Blast Dashboard (Blast messages only, simplified) 
-app.get("/api/blast-dashboard", async (req, res) => {
+// Helper function to map actions to icons
+function mapActionToIcon(action) {
+  const iconMapping = {
+    "contacts scraped": "CheckCircle2",
+    "contact added": "PlusCircle",
+    "blast created": "MessageSquare",
+    "blast sent": "CheckCircle",
+    "session connected": "RefreshCcw",
+    "session disconnected": "XCircle",
+    "error": "XCircle",
+  };
+
+  return iconMapping[action] || "Clock";
+}
+
+//     const totalMessagesSent = agent.blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
+//     const totalScheduledBlasts = agent.blastMessages.filter((blast) => blast.status === "Scheduled").length;
+//     const totalDelivered = agent.blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
+//     const totalSent = agent.blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
+//     const successRate = totalSent ? ((totalDelivered / totalSent) * 100).toFixed(2) : 0;
+
+//     const dashboardData = {
+//       totalContacts: agent.contacts.length,
+//       messagesSent: totalMessagesSent,
+//       scheduledBlasts: totalScheduledBlasts,
+//       successRate: parseFloat(successRate),
+//       recentBlasts,
+//       recentActivity,
+//     };
+
+//     res.json(dashboardData);
+//   } catch (err) {
+//     console.error("❌ Error fetching Dashboard data:", err);
+//     res.status(500).json({ error: "Failed to fetch dashboard data" });
+//   }
+// });
+
+const { DateTime } = require('luxon');
+
+// 🚩 Seed Agent Route
+app.post("/api/seed-agent", async (req, res) => {
+  const hongKongTime = (isoString) => DateTime.fromISO(isoString, { zone: 'Asia/Hong_Kong' }).toJSDate();
+
+  const agentData = {
+    phone: "85268712802",
+    password: "turoid123",
+    contacts: [
+      { name: "Jane Chan", phone: "85298765432", labels: ["VIP", "New"], createdAt: hongKongTime("2025-05-19T10:33:25") },
+      { name: "John Doe", phone: "85212345678", labels: ["Regular"], createdAt: hongKongTime("2025-05-19T10:33:25") },
+      { name: "Alice Wong", phone: "85291234567", labels: ["Regular", "Loyal"], createdAt: hongKongTime("2025-05-18T09:22:00") },
+      { name: "Bob Lee", phone: "85298761234", labels: ["VIP"], createdAt: hongKongTime("2025-05-17T14:15:00") }
+    ],
+    blastMessages: [
+      {
+        scheduled: false,
+        title: "🎉 Birthday Promo",
+        sent: 120,
+        delivered: 115,
+        failed: 5,
+        scheduledAt: hongKongTime("2025-04-29T23:00:00"),
+        createdAt: hongKongTime("2025-04-29T20:00:00"),
+        content: "Happy Birthday!",
+        status: "Completed"
+      },
+      {
+        scheduled: true,
+        title: "📢 Promo Alert",
+        sent: 150,
+        delivered: 147,
+        failed: 3,
+        scheduledAt: hongKongTime("2025-05-01T18:00:00"),
+        createdAt: hongKongTime("2025-04-30T12:00:00"),
+        content: "Special discount available!",
+        status: "Scheduled"
+      },
+      {
+        scheduled: false,
+        title: "💬 Follow-up Message",
+        sent: 98,
+        delivered: 97,
+        failed: 1,
+        scheduledAt: hongKongTime("2025-04-28T02:30:00"),
+        createdAt: hongKongTime("2025-04-28T01:00:00"),
+        content: "Reminder about your appointment.",
+        status: "Completed"
+      }
+    ],
+    activities: [
+      {
+        action: "contacts scraped",
+        datetime: hongKongTime("2025-05-18T23:00:00")
+      },
+      {
+        action: "contact added",
+        datetime: hongKongTime("2025-05-19T18:45:00")
+      },
+      {
+        action: "blast created",
+        datetime: hongKongTime("2025-05-17T13:00:00")
+      },
+      {
+        action: "blast sent",
+        datetime: hongKongTime("2025-05-01T18:01:00")
+      },
+      {
+        action: "session connected",
+        datetime: hongKongTime("2025-05-20T09:00:00")
+      }
+    ]
+  };
+
   try {
-    const data = await BlastMessage.find({ status: { $ne: "System" } })
-      .sort({ date: -1 }).limit(20)
-      .select("title sent delivered failed date status");
-      
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch blast dashboard data" });
+    const agent = new Agent(agentData);
+    await agent.save();
+    res.status(201).json(agent);
+  } catch (error) {
+    console.error("❌ Error seeding agent data:", error);
+    res.status(500).json({ error: "Failed to seed agent data" });
   }
 });
 
-// ✅ Add Activity Feed item (New API for adding items individually) 
-app.get("/api/activity-feed", async (req, res) => {
-  try {
-    const data = await BlastMessage.find({})
-      .sort({ date: -1 })
-      .limit(20);
-    console.log("✅ Blast Messages fetched:", data);
-    res.json(data);
-  } catch (err) {
-    console.error("❌ Error fetching blast messages:", err);
-    res.status(500).json({ error: "Failed to fetch blast messages" });
-  }
-});
 
 // ====================================================== 2. Mongo DB: [Contact CRUD Routes]: add-contacts, delete-contacts ========================================================
 app.post("/api/add-contacts", async (req, res) => {
@@ -391,6 +492,14 @@ app.post("/message-composer/generate", async (req, res) => {
     res.status(500).send("Failed to generate message.");
   }
 });
+
+
+// app.post("/blast-create", async (req, res) => {
+//   const now = new Date(8 *60 * 60 * 1000).now();
+//   new Blast({title, content, now})
+
+//   new Activity({actino, now})
+// })
 
 const PORT = process.env.PORT || 5001;
 http

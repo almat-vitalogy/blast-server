@@ -30,7 +30,7 @@ const AgentSchema = new mongoose.Schema({
 
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
-});
+}); 
 
 AgentSchema.pre('save', function(next) {
   this.updatedAt = Date.now();

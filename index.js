@@ -14,7 +14,7 @@ const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
-// app.use(cors()); // allow cross-origin requests
+app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 // ------------------ Storage --------------------
@@ -67,8 +67,7 @@ mongoose
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// ================================================================================== 🚩 Dynamic Dashboard (Agent-specific) ================================================================================== 
-
+// ================================================================================== 🚩 Dynamic Dashboard (Agent-specific) ==================================================================================
 
 // 🚩 Updated Dashboard Route (Dynamic, agent-specific)
 app.get("/api/dashboard/:agentPhone", async (req, res) => {
@@ -81,9 +80,7 @@ app.get("/api/dashboard/:agentPhone", async (req, res) => {
       return res.status(404).json({ error: "Agent not found" });
     }
 
-    const recentBlasts = agent.blastMessages
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 5);
+    const recentBlasts = agent.blastMessages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
 
     const recentActivity = agent.activities
       .sort((a, b) => new Date(b.datetime) - new Date(a.datetime))
@@ -103,7 +100,7 @@ app.get("/api/dashboard/:agentPhone", async (req, res) => {
       successRate: parseFloat(successRate),
       recentBlasts,
       recentActivity,
-      blastMessages: agent.blastMessages, 
+      blastMessages: agent.blastMessages,
     };
 
     res.json(dashboardData);
@@ -122,7 +119,7 @@ function mapActionToIcon(action) {
     "blast sent": "CheckCircle",
     "session connected": "RefreshCcw",
     "session disconnected": "XCircle",
-    "error": "XCircle",
+    error: "XCircle",
   };
 
   return iconMapping[action] || "Clock";
@@ -150,11 +147,11 @@ function mapActionToIcon(action) {
 //   }
 // });
 
-const { DateTime } = require('luxon');
+const { DateTime } = require("luxon");
 
 // 🚩 Seed Agent Route
 app.post("/api/seed-agent", async (req, res) => {
-  const hongKongTime = (isoString) => DateTime.fromISO(isoString, { zone: 'Asia/Hong_Kong' }).toJSDate();
+  const hongKongTime = (isoString) => DateTime.fromISO(isoString, { zone: "Asia/Hong_Kong" }).toJSDate();
 
   const agentData = {
     phone: "85268712802",
@@ -163,7 +160,7 @@ app.post("/api/seed-agent", async (req, res) => {
       { name: "Jane Chan", phone: "85298765432", labels: ["VIP", "New"], createdAt: hongKongTime("2025-05-19T10:33:25") },
       { name: "John Doe", phone: "85212345678", labels: ["Regular"], createdAt: hongKongTime("2025-05-19T10:33:25") },
       { name: "Alice Wong", phone: "85291234567", labels: ["Regular", "Loyal"], createdAt: hongKongTime("2025-05-18T09:22:00") },
-      { name: "Bob Lee", phone: "85298761234", labels: ["VIP"], createdAt: hongKongTime("2025-05-17T14:15:00") }
+      { name: "Bob Lee", phone: "85298761234", labels: ["VIP"], createdAt: hongKongTime("2025-05-17T14:15:00") },
     ],
     blastMessages: [
       {
@@ -175,7 +172,7 @@ app.post("/api/seed-agent", async (req, res) => {
         scheduledAt: hongKongTime("2025-04-29T23:00:00"),
         createdAt: hongKongTime("2025-04-29T20:00:00"),
         content: "Happy Birthday!",
-        status: "Completed"
+        status: "Completed",
       },
       {
         scheduled: true,
@@ -186,7 +183,7 @@ app.post("/api/seed-agent", async (req, res) => {
         scheduledAt: hongKongTime("2025-05-01T18:00:00"),
         createdAt: hongKongTime("2025-04-30T12:00:00"),
         content: "Special discount available!",
-        status: "Scheduled"
+        status: "Scheduled",
       },
       {
         scheduled: false,
@@ -197,31 +194,31 @@ app.post("/api/seed-agent", async (req, res) => {
         scheduledAt: hongKongTime("2025-04-28T02:30:00"),
         createdAt: hongKongTime("2025-04-28T01:00:00"),
         content: "Reminder about your appointment.",
-        status: "Completed"
-      }
+        status: "Completed",
+      },
     ],
     activities: [
       {
         action: "contacts scraped",
-        datetime: hongKongTime("2025-05-18T23:00:00")
+        datetime: hongKongTime("2025-05-18T23:00:00"),
       },
       {
         action: "contact added",
-        datetime: hongKongTime("2025-05-19T18:45:00")
+        datetime: hongKongTime("2025-05-19T18:45:00"),
       },
       {
         action: "blast created",
-        datetime: hongKongTime("2025-05-17T13:00:00")
+        datetime: hongKongTime("2025-05-17T13:00:00"),
       },
       {
         action: "blast sent",
-        datetime: hongKongTime("2025-05-01T18:01:00")
+        datetime: hongKongTime("2025-05-01T18:01:00"),
       },
       {
         action: "session connected",
-        datetime: hongKongTime("2025-05-20T09:00:00")
-      }
-    ]
+        datetime: hongKongTime("2025-05-20T09:00:00"),
+      },
+    ],
   };
 
   try {
@@ -233,7 +230,6 @@ app.post("/api/seed-agent", async (req, res) => {
     res.status(500).json({ error: "Failed to seed agent data" });
   }
 });
-
 
 // ====================================================== 2. Mongo DB: [Contact CRUD Routes]: add-contacts, delete-contacts ========================================================
 app.post("/api/add-contacts", async (req, res) => {
@@ -492,7 +488,6 @@ app.post("/message-composer/generate", async (req, res) => {
     res.status(500).send("Failed to generate message.");
   }
 });
-
 
 // app.post("/blast-create", async (req, res) => {
 //   const now = new Date(8 *60 * 60 * 1000).now();

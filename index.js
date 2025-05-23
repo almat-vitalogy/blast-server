@@ -80,9 +80,7 @@ app.get("/api/dashboard/:agentPhone", async (req, res) => {
       return res.status(404).json({ error: "Agent not found" });
     }
 
-    const recentBlasts = agent.blastMessages
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 5);
+    const recentBlasts = agent.blastMessages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
 
     const recentActivity = agent.activities
       .sort((a, b) => new Date(b.datetime) - new Date(a.datetime))
@@ -103,7 +101,7 @@ app.get("/api/dashboard/:agentPhone", async (req, res) => {
       successRate: parseFloat(successRate),
       recentBlasts,
       recentActivity,
-      blastMessages: agent.blastMessages, 
+      blastMessages: agent.blastMessages,
     };
 
     res.json(dashboardData);
@@ -122,7 +120,7 @@ function mapActionToIcon(action) {
     "blast sent": "CheckCircle",
     "session connected": "RefreshCcw",
     "session disconnected": "XCircle",
-    "error": "XCircle",
+    error: "XCircle",
   };
 
   return iconMapping[action] || "Clock";

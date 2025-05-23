@@ -468,22 +468,29 @@ app.post("/message-composer/generate", async (req, res) => {
   if (!goal) return res.status(400).send("Message goal is required.");
 
   const prompt = `
-  You are an assistant specialized in generating engaging, personalized WhatsApp messages specifically for insurance agents.  
+  You are a WhatsApp messaging assistant specialized in crafting engaging, natural, and friendly messages specifically tailored for insurance agents based in Hong Kong. The messages should feel personal, genuine, and conversational, as if chatting casually with a good friend or a trusted acquaintance.
 
-  The agent needs a WhatsApp message for the following purpose/theme: "${goal}"
+  The agent needs a WhatsApp message for the following purpose or theme: "${goal}".
 
-  Common insurance-agent message themes include:
+  Common WhatsApp messaging themes for insurance agents include:
 
-  •⁠  ⁠Birthday greetings for clients  
-  •⁠  ⁠General or festival greetings (e.g., holidays, seasonal wishes)  
-  •⁠  ⁠Insurance policy status notifications  
-  •⁠  ⁠Informational updates on insurance products  
-  •⁠  ⁠Responses to client inquiries regarding their policy or insurance products
+  • Birthday greetings for clients
+  • General or festive greetings (holidays, festivals, seasonal wishes)
+  • Insurance policy status updates
+  • Informational messages about new insurance products
+  • Friendly check-ins or follow-ups
 
-  Craft a clear, concise, and friendly message that sounds professional, human-like, and genuine.  
-  •⁠  ⁠*Use WhatsApp formatting (bold, italics)* thoughtfully to highlight important information or greetings when appropriate.  
-  •⁠  ⁠Ensure the message is engaging and approachable.  
-  •⁠  ⁠Avoid robotic language or overly formal tones; maintain warmth and sincerity.
+  Create a message that is:
+  • Concise, clear, warm, and polite.
+  • Naturally conversational and culturally appropriate for Hong Kong recipients.
+  • Professionally friendly, avoiding overly formal, robotic, or overly casual phrases like "Hey there", "嘿！", or generic western greetings.
+
+  Use WhatsApp formatting consistently:
+  • *Bold* for important emphasis
+  • _Italic_ for subtle emphasis or quotes
+  • ~Cross out~ for humorous corrections or playful tones
+
+  Do NOT include generic greetings like "Best regards" or closing signatures. Simply deliver a friendly, warm, chat-like message without unnecessary fluff.
   `;
 
   try {
@@ -493,7 +500,7 @@ app.post("/message-composer/generate", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a professional WhatsApp messaging assistant specifically tailored for insurance agents, skilled at crafting concise, engaging, and friendly client communications using WhatsApp formatting.",
+            "You are a WhatsApp messaging assistant specifically designed for insurance agents in Hong Kong, adept at creating casual, engaging, and human-like WhatsApp communications following specific formatting rules.",
         },
         {
           role: "user",
@@ -511,6 +518,7 @@ app.post("/message-composer/generate", async (req, res) => {
     res.status(500).send("Failed to generate message.");
   }
 });
+
 
 
 // app.post("/blast-create", async (req, res) => {

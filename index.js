@@ -8,6 +8,9 @@ const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
 const Agent = require("./models/Agents");
+const Contact = require("./models/Contact");
+const BlastMessage = require("./models/BlastMessage");
+const Activity = require("./models/Activity");
 const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
 
@@ -70,46 +73,79 @@ mongoose
 // ================================================================================== 🚩 1. Dynamic Dashboard (Agent-specific) ================================================================================== 
 
 // 🚩 Updated Dashboard Route (Dynamic, agent-specific)
-app.get("/api/dashboard/:agentPhone", async (req, res) => {
-  const { agentPhone } = req.params;
+// app.get("/api/dashboard/:agentPhone", async (req, res) => {
+//   const { agentPhone } = req.params;
+
+//   try {
+//     const agent = await Agent.findOne({ phone: agentPhone });
+
+//     if (!agent) {
+//       return res.status(404).json({ error: "Agent not found" });
+//     }
+
+//     const recentBlasts = agent.blastMessages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+
+//     const recentActivity = agent.activities
+//       .sort((a, b) => new Date(b.datetime) - new Date(a.datetime))
+//       .slice(0, 5)
+//       .map((activity) => ({
+//         icon: mapActionToIcon(activity.action),
+//         description: activity.action,
+//         timestamp: new Date(activity.datetime).toISOString(),
+//       }));
+
+//     const totalDelivered = agent.blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
+//     const totalSent = agent.blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
+//     const successRate = totalSent ? ((totalDelivered / totalSent) * 100).toFixed(2) : 0;
+
+//     const dashboardData = {
+//       totalContacts: agent.contacts.length,
+//       contacts: agent.contacts, 
+//       successRate: parseFloat(successRate),
+//       recentBlasts,
+//       recentActivity,
+//       blastMessages: agent.blastMessages,
+//     };
+
+//     res.json(dashboardData);
+//   } catch (err) {
+//     console.error("❌ Error fetching Dashboard data:", err);
+//     res.status(500).json({ error: "Failed to fetch dashboard data" });
+//   }
+// });
+
+app.get("/api/dashboard/:userEmail", async (req, res) => {
+  const { userEmail } = req.params;
 
   try {
-    const agent = await Agent.findOne({ phone: agentPhone });
+    const contacts = await Contact.find({ userEmail });
+    const blastMessages = await BlastMessage.find({ userEmail }).sort({ scheduledAt: -1 });
+    const activities = await Activity.find({ userEmail }).sort({ updatedAt: -1 });
 
-    if (!agent) {
-      return res.status(404).json({ error: "Agent not found" });
-    }
+    const recentBlasts = blastMessages.slice(0, 5);
+    const recentActivity = activities.slice(0, 5).map(activity => ({
+      icon: mapActionToIcon(activity.action),
+      description: activity.action,
+      timestamp: activity.updatedAt
+    }));
 
-    const recentBlasts = agent.blastMessages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
-
-    const recentActivity = agent.activities
-      .sort((a, b) => new Date(b.datetime) - new Date(a.datetime))
-      .slice(0, 5)
-      .map((activity) => ({
-        icon: mapActionToIcon(activity.action),
-        description: activity.action,
-        timestamp: new Date(activity.datetime).toISOString(),
-      }));
-
-    const totalDelivered = agent.blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
-    const totalSent = agent.blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
+    const totalDelivered = blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
+    const totalSent = blastMessages.reduce((sum, blast) => sum + blast.sent, 0);
     const successRate = totalSent ? ((totalDelivered / totalSent) * 100).toFixed(2) : 0;
 
-    const dashboardData = {
-      totalContacts: agent.contacts.length,
-      contacts: agent.contacts, 
+    res.json({
+      totalContacts: contacts.length,
+      contacts,
       successRate: parseFloat(successRate),
       recentBlasts,
       recentActivity,
-      blastMessages: agent.blastMessages,
-    };
-
-    res.json(dashboardData);
-  } catch (err) {
-    console.error("❌ Error fetching Dashboard data:", err);
+      blastMessages
+    });
+  } catch (error) {
     res.status(500).json({ error: "Failed to fetch dashboard data" });
   }
 });
+
 
 // Helper function to map actions to icons
 function mapActionToIcon(action) {
@@ -210,6 +246,83 @@ function mapActionToIcon(action) {
 //   }
 // });
 
+app.get("/api/contacts/:userEmail", async (req, res) => {
+  try {
+    const contacts = await Contact.find({ userEmail: req.params.userEmail });
+    res.json(contacts);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch contacts" });
+  }
+});
+
+// Get Blast Messages by userEmail
+app.get("/api/blast-messages/:userEmail", async (req, res) => {
+  try {
+    const blasts = await BlastMessage.find({ userEmail: req.params.userEmail }).sort({ createdAt: -1 });
+    res.json(blasts);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch blast messages" });
+  }
+});
+
+// Get Activities by userEmail
+app.get("/api/activities/:userEmail", async (req, res) => {
+  try {
+    const activities = await Activity.find({ userEmail: req.params.userEmail }).sort({ updatedAt: -1 });
+    res.json(activities);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch activities" });
+  }
+});
+
+const OldAgent = require("./models/Agents");
+
+app.post("/api/migrate-agent/:phone/:email", async (req, res) => {
+  const { phone, email } = req.params;
+
+  try {
+    const agent = await OldAgent.findOne({ phone });
+
+    if (!agent) return res.status(404).json({ error: "Agent not found." });
+
+    // Migrate Contacts
+    const contacts = agent.contacts.map(c => ({ 
+      userEmail: email, 
+      phone: c.phone, 
+      name: c.name, 
+      labels: c.labels 
+    }));
+    await Contact.insertMany(contacts);
+
+    // Migrate Blast Messages (no createdAt/updatedAt)
+    const blasts = agent.blastMessages.map(b => ({
+      userEmail: email,
+      scheduled: b.scheduled,
+      title: b.title,
+      sent: b.sent,
+      delivered: b.delivered,
+      failed: b.failed,
+      scheduledAt: b.scheduledAt,
+      content: b.content,
+      status: b.status
+    }));
+    await BlastMessage.insertMany(blasts);
+
+    // Migrate Activities
+    const activities = agent.activities.map(a => ({
+      userEmail: email,
+      action: a.action,
+      updatedAt: a.datetime
+    }));
+    await Activity.insertMany(activities);
+
+    res.json({ message: "✅ Migration completed successfully." });
+  } catch (error) {
+    console.error("❌ Migration error:", error);
+    res.status(500).json({ error: "Migration failed." });
+  }
+});
+
 
 // ====================================================== 2. Mongo DB: [Contact CRUD Routes]: add-contacts, delete-contacts ========================================================
 // app.post("/api/add-contacts", async (req, res) => {
@@ -245,55 +358,93 @@ function mapActionToIcon(action) {
 // });
 
 // Add a Contact to the agent's contact list
-app.post("/api/add-contact/:agentPhone", async (req, res) => {
-  const { agentPhone } = req.params;
+// app.post("/api/add-contact/:agentPhone", async (req, res) => {
+//   const { agentPhone } = req.params;
+//   const { name, phone } = req.body;
+
+//   try {
+//     const agent = await Agent.findOne({ phone: agentPhone });
+//     if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+//     agent.contacts.push({ name, phone, createdAt: new Date() });
+//     await agent.save();
+
+//     res.status(201).json({ success: true, contact: { name, phone } });
+//   } catch (err) {
+//     console.error("❌ Error adding contact:", err);
+//     res.status(500).json({ error: "Failed to add contact" });
+//   }
+// });
+
+app.post("/api/add-contact/:userEmail", async (req, res) => {
+  const { userEmail } = req.params;
   const { name, phone } = req.body;
 
   try {
-    const agent = await Agent.findOne({ phone: agentPhone });
-    if (!agent) return res.status(404).json({ error: "Agent not found" });
-
-    agent.contacts.push({ name, phone, createdAt: new Date() });
-    await agent.save();
-
-    res.status(201).json({ success: true, contact: { name, phone } });
+    const contact = new Contact({ userEmail, name, phone });
+    await contact.save();
+    res.status(201).json({ success: true, contact });
   } catch (err) {
-    console.error("❌ Error adding contact:", err);
     res.status(500).json({ error: "Failed to add contact" });
   }
 });
 
+
 // Delete a Contact by phone number from the agent's contact list
-app.delete("/api/delete-contact/:agentPhone/:phone", async (req, res) => {
-  const { agentPhone, phone } = req.params;
+// app.delete("/api/delete-contact/:agentPhone/:phone", async (req, res) => {
+//   const { agentPhone, phone } = req.params;
+
+//   try {
+//     const agent = await Agent.findOne({ phone: agentPhone });
+//     if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+//     const initialLength = agent.contacts.length;
+//     agent.contacts = agent.contacts.filter((c) => c.phone !== phone);
+
+//     if (agent.contacts.length === initialLength)
+//       return res.status(404).json({ error: "Contact not found" });
+
+//     await agent.save();
+//     res.status(200).json({ success: true });
+//   } catch (err) {
+//     console.error("❌ Error deleting contact:", err);
+//     res.status(500).json({ error: "Failed to delete contact" });
+//   }
+// });
+
+app.delete("/api/delete-contact/:userEmail/:phone", async (req, res) => {
+  const { userEmail, phone } = req.params;
 
   try {
-    const agent = await Agent.findOne({ phone: agentPhone });
-    if (!agent) return res.status(404).json({ error: "Agent not found" });
-
-    const initialLength = agent.contacts.length;
-    agent.contacts = agent.contacts.filter((c) => c.phone !== phone);
-
-    if (agent.contacts.length === initialLength)
-      return res.status(404).json({ error: "Contact not found" });
-
-    await agent.save();
+    const deleted = await Contact.findOneAndDelete({ userEmail, phone });
+    if (!deleted) return res.status(404).json({ error: "Contact not found" });
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error("❌ Error deleting contact:", err);
     res.status(500).json({ error: "Failed to delete contact" });
   }
 });
 
-app.get("/api/get-contacts", async (req, res) => {
+
+// app.get("/api/get-contacts", async (req, res) => {
+//   try {
+//     const contacts = await Contact.find({});
+//     res.json(contacts);
+//   } catch (err) {
+//     console.error("❌ Error fetching contacts:", err);
+//     res.status(500).json({ error: "Failed to fetch contacts" });
+//   }
+// });
+
+app.get("/api/get-contacts/:userEmail", async (req, res) => {
+  const { userEmail } = req.params;
   try {
-    const contacts = await Contact.find({});
+    const contacts = await Contact.find({ userEmail });
     res.json(contacts);
   } catch (err) {
-    console.error("❌ Error fetching contacts:", err);
     res.status(500).json({ error: "Failed to fetch contacts" });
   }
 });
+
 
 // ====================================================== Mongo DB end ========================================================
 app.post("/connect-user", async (req, res) => {

@@ -17,7 +17,7 @@ const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
-app.use(cors()); // allow cross-origin requests
+// app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 // ------------------ Storage --------------------
@@ -60,7 +60,7 @@ function delay(ms) {
 }
 
 // ------------------ Routes ---------------------
-app.get("/", (req, res) => res.send("Server is running 1"));
+app.get("/", (req, res) => res.send("deal maker server is running"));
 
 // ====================================================== Mongo DB starts: fetch data for: dashboard, blast-dashboard, activity-feed ========================================================
 const MONGODB_URI = "mongodb+srv://jasmine:xxbjyP0RMNrOf2eS@dealmaker.hbhznd5.mongodb.net/?retryWrites=true&w=majority&appName=dealmaker";
@@ -70,7 +70,7 @@ mongoose
   .then(() => console.log("✅ MongoDB connected successfully"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// ================================================================================== 🚩 1. Dynamic Dashboard (Agent-specific) ================================================================================== 
+// ================================================================================== 🚩 1. Dynamic Dashboard (Agent-specific) ==================================================================================
 
 // 🚩 Updated Dashboard Route (Dynamic, agent-specific)
 
@@ -79,14 +79,14 @@ app.get("/api/dashboard/:userEmail", async (req, res) => {
 
   try {
     const contacts = await Contact.find({ userEmail });
-    const blastMessages = await BlastMessage.find({ userEmail }).sort({ scheduledAt: -1 });
+    const blastMessages = await BlastMessage.find({ userEmail }).sort({ createdAt: -1 });
     const activities = await Activity.find({ userEmail }).sort({ updatedAt: -1 });
 
     const recentBlasts = blastMessages.slice(0, 5);
-    const recentActivity = activities.slice(0, 5).map(activity => ({
+    const recentActivity = activities.slice(0, 5).map((activity) => ({
       icon: mapActionToIcon(activity.action),
       description: activity.action,
-      timestamp: activity.updatedAt
+      timestamp: activity.updatedAt,
     }));
 
     const totalDelivered = blastMessages.reduce((sum, blast) => sum + blast.delivered, 0);
@@ -99,7 +99,7 @@ app.get("/api/dashboard/:userEmail", async (req, res) => {
       successRate: parseFloat(successRate),
       recentBlasts,
       recentActivity,
-      blastMessages
+      blastMessages,
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch dashboard data" });
@@ -111,10 +111,12 @@ function mapActionToIcon(action) {
   const iconMapping = {
     "contacts scraped": "CheckCircle2",
     "contact added": "PlusCircle",
+    "contact deleted": "XCircle",
     "blast created": "MessageSquare",
     "blast sent": "CheckCircle",
     "session connected": "RefreshCcw",
     "session disconnected": "XCircle",
+    "message composed": "MessageCircle",
     error: "XCircle",
   };
 
@@ -152,16 +154,20 @@ app.get("/api/activities/:userEmail", async (req, res) => {
 
 // ====================================================== 2. Mongo DB: [Contact CRUD Routes]: add-contacts, delete-contacts ========================================================
 
-
 app.post("/api/add-contact/:userEmail", async (req, res) => {
   const { userEmail } = req.params;
   const { name, phone } = req.body;
+  console.log(`data: ${userEmail}, ${name}, ${phone}`);
 
   try {
+    console.log("trying to add contact");
     const contact = new Contact({ userEmail, name, phone });
+    const forntendContact = { name, phone };
+    console.log("contact created:", forntendContact);
     await contact.save();
-    res.status(201).json({ success: true, contact });
+    res.status(201).json({ success: true, forntendContact });
   } catch (err) {
+    console.error("Error saving contact:", err);
     res.status(500).json({ error: "Failed to add contact" });
   }
 });
@@ -188,6 +194,28 @@ app.get("/api/get-contacts/:userEmail", async (req, res) => {
   }
 });
 
+app.post("/api/update-activity", async (req, res) => {
+  const { userEmail, action } = req.body;
+
+  if (!userEmail || !action) {
+    return res.status(400).json({ error: "Missing userEmail or action" });
+  }
+
+  try {
+    const activity = new Activity({
+      userEmail,
+      action,
+      updatedAt: new Date(), // optional, Mongoose can handle this automatically if your schema supports it
+    });
+
+    await activity.save();
+    console.log(`📘 Activity logged: ${action} for ${userEmail}`);
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error("❌ Failed to save activity:", err);
+    res.status(500).json({ error: "Failed to save activity" });
+  }
+});
 
 // ====================================================== Mongo DB end ========================================================
 app.post("/connect-user", async (req, res) => {
@@ -244,7 +272,7 @@ app.post("/disconnect-user", async (req, res) => {
 });
 
 app.post("/send-message", async (req, res) => {
-  const { userId, phoneNumbers, message } = req.body;
+  const { userId, phoneNumbers, message, userEmail, title } = req.body;
 
   if (!userId || !Array.isArray(phoneNumbers) || phoneNumbers.length === 0 || !message) {
     return res.status(400).json({ error: "Missing or invalid required fields" });
@@ -257,18 +285,25 @@ app.post("/send-message", async (req, res) => {
   }
 
   const page = user.page;
-
+  console.log("Sending message with data:", {
+    userId,
+    phoneNumbers,
+    message,
+    userEmail,
+    title,
+  });
+  // const whatsappUrl = "https://web.whatsapp.com";
+  // await page.goto(whatsappUrl, { waitUntil: "networkidle2" });
   for (const phoneNumber of phoneNumbers) {
     try {
-      // Step 1: Go to WTS
-      const whatsappUrl = "https://web.whatsapp.com";
-      await page.goto(whatsappUrl, { waitUntil: "networkidle2" });
-
+      // Step 1: select searchbar and search for the contact
       await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 10000 });
       const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
       await page.focus(searchBarSelector);
       await page.type(searchBarSelector, phoneNumber);
+      await delay(1000); // Wait for search results to load
       await page.keyboard.press("Enter");
+      await delay(1000); // Wait for chat to load
 
       // Step 2: Wait for chat input
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
@@ -277,7 +312,9 @@ app.post("/send-message", async (req, res) => {
       // Step 3: Focus input and type message
       await page.focus(inputSelector);
       await page.type(inputSelector, message);
+      await delay(1000); // Ensure message is typed
       await page.keyboard.press("Enter");
+      await delay(1000); // Wait for message to send
 
       console.log(`✅ Message sent to ${phoneNumber}: ${message}`);
     } catch (error) {
@@ -285,6 +322,22 @@ app.post("/send-message", async (req, res) => {
       return res.status(500).json({ error: "Failed to send message" });
     }
   }
+
+  try {
+    const blast = new BlastMessage({
+      userEmail,
+      scheduled: false,
+      title: title,
+      content: message,
+      contacts: phoneNumbers,
+    });
+
+    await blast.save();
+    console.log("📦 Blast message saved:", title);
+  } catch (err) {
+    console.error("❌ Failed to save blast message:", err.message);
+  }
+
   return res.status(200).json({ success: true });
 });
 
@@ -360,17 +413,9 @@ app.post("/message-composer/generate", async (req, res) => {
   if (!goal) return res.status(400).send("Message goal is required.");
 
   const prompt = `
-  You are a WhatsApp messaging assistant specialized in crafting engaging, natural, and friendly messages specifically tailored for insurance agents based in Hong Kong. The messages should feel personal, genuine, and conversational, as if chatting casually with a good friend or a trusted acquaintance.
+  You are a WhatsApp messaging assistant specialized in crafting engaging, natural, and friendly messages. The messages should feel personal, genuine, and conversational, as if chatting casually with a good friend or a trusted acquaintance.
 
   The agent needs a WhatsApp message for the following purpose or theme: "${goal}".
-
-  Common WhatsApp messaging themes for insurance agents include:
-
-  • Birthday greetings for clients
-  • General or festive greetings (holidays, festivals, seasonal wishes)
-  • Insurance policy status updates
-  • Informational messages about new insurance products
-  • Friendly check-ins or follow-ups
 
   Create a message that is:
   • Concise, clear, warm, and polite.
@@ -383,7 +428,34 @@ app.post("/message-composer/generate", async (req, res) => {
   • ~Cross out~ for humorous corrections or playful tones
 
   Do NOT include generic greetings like "Best regards" or closing signatures. Simply deliver a friendly, warm, chat-like message without unnecessary fluff.
+
+  Output the entire message as a single line with no line breaks or newlines.
   `;
+  // const prompt = `
+  // You are a WhatsApp messaging assistant specialized in crafting engaging, natural, and friendly messages specifically tailored for insurance agents based in Hong Kong. The messages should feel personal, genuine, and conversational, as if chatting casually with a good friend or a trusted acquaintance.
+
+  // The agent needs a WhatsApp message for the following purpose or theme: "${goal}".
+
+  // Common WhatsApp messaging themes for insurance agents include:
+
+  // • Birthday greetings for clients
+  // • General or festive greetings (holidays, festivals, seasonal wishes)
+  // • Insurance policy status updates
+  // • Informational messages about new insurance products
+  // • Friendly check-ins or follow-ups
+
+  // Create a message that is:
+  // • Concise, clear, warm, and polite.
+  // • Naturally conversational and culturally appropriate for Hong Kong recipients.
+  // • Professionally friendly, avoiding overly formal, robotic, or overly casual phrases like "Hey there", "嘿！", or generic western greetings.
+
+  // Use WhatsApp formatting consistently:
+  // • *Bold* for important emphasis
+  // • _Italic_ for subtle emphasis or quotes
+  // • ~Cross out~ for humorous corrections or playful tones
+
+  // Do NOT include generic greetings like "Best regards" or closing signatures. Simply deliver a friendly, warm, chat-like message without unnecessary fluff.
+  // `;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -410,15 +482,6 @@ app.post("/message-composer/generate", async (req, res) => {
     res.status(500).send("Failed to generate message.");
   }
 });
-
-
-
-// app.post("/blast-create", async (req, res) => {
-//   const now = new Date(8 *60 * 60 * 1000).now();
-//   new Blast({title, content, now})
-
-//   new Activity({actino, now})
-// })
 
 const PORT = process.env.PORT || 5001;
 http

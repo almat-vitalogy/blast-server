@@ -33,8 +33,9 @@ async function initWTS(userId) {
   const page = await browser.newPage();
   await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
-  // Get the QR code
   await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
+
+  // Get and save QR code
   await page.waitForSelector("canvas", { timeout: 60000 });
   const qrCodeElement = await page.$("canvas");
   const qrDir = path.join(__dirname, "public", "qrcodes");
@@ -51,7 +52,7 @@ async function initWTS(userId) {
   return {
     browser,
     page,
-    qrCodeUrl: `/qrcodes/${qrFilename}`, // ⬅️ Return this to the frontend
+    qrCodeUrl: `/qrcodes/${qrFilename}`,
   };
 }
 
@@ -339,6 +340,54 @@ app.post("/send-message", async (req, res) => {
   }
 
   return res.status(200).json({ success: true });
+});
+
+app.post("/check-connection", async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  const user = users[userId];
+  if (!user || !user.page) {
+    return res.status(404).json({ error: "User session not found" });
+  }
+
+  const page = user.page;
+
+  try {
+    const message = "Connection with Dealmaker is successful ✅";
+    const contactName = "me";
+
+    console.log(`🔍 Checking connection for user: ${userId}`);
+
+    // Step 1: select search bar and search for contact "me"
+    const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
+    await page.waitForSelector(searchBarSelector, { timeout: 10000 });
+    await page.focus(searchBarSelector);
+    await page.type(searchBarSelector, contactName);
+    await delay(1000);
+    await page.keyboard.press("Enter");
+    await delay(1000);
+
+    // Step 2: select message input
+    const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
+    await page.waitForSelector(inputSelector, { timeout: 30000 });
+
+    // Step 3: send message
+    await page.focus(inputSelector);
+    await page.type(inputSelector, message);
+    await delay(1000);
+    await page.keyboard.press("Enter");
+    await delay(1000);
+
+    console.log("✅ Confirmation message sent to 'me'");
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("❌ Failed to send connection confirmation message:", error);
+    return res.status(500).json({ error: "Failed to send connection confirmation message" });
+  }
 });
 
 app.post("/scrape-contacts", async (req, res) => {

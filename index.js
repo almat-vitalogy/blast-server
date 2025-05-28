@@ -357,36 +357,57 @@ app.post("/check-connection", async (req, res) => {
   const page = user.page;
 
   try {
-    const message = "Connection with Dealmaker is successful ✅";
-    const contactName = "me";
-
     console.log(`🔍 Checking connection for user: ${userId}`);
 
-    // Step 1: select search bar and search for contact "me"
+    // Step 1: Click profile button using Puppeteer extended XPath selector
+    const profileBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[2]/div[2]/button)', {
+      timeout: 10000,
+    });
+    await profileBtn.click();
+    await delay(1000); // Let profile screen load
+
+    // Step 2: Extract 'Your name' using XPath selector
+    const nameSpan = await page.waitForSelector(
+      '::-p-xpath(//*[@id="app"]/div/div[3]/div/div[2]/div[1]/span/div/div/span/div/div/div[2]/div[2]/div/div/span/span)',
+      { timeout: 10000 }
+    );
+    const name = await page.evaluate((el) => el.textContent, nameSpan);
+    if (!name) throw new Error("❌ Failed to extract name content");
+    console.log(`📛 Extracted name: ${name}`);
+
+    // Step 3: Return to chats by clicking the Chats button via XPath
+    const chatsBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[1]/div[1]/button)', {
+      timeout: 10000,
+    });
+    await chatsBtn.click();
+    await delay(1000);
+
+    // Step 4: Use the search bar to find yourself
     const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
     await page.waitForSelector(searchBarSelector, { timeout: 10000 });
     await page.focus(searchBarSelector);
-    await page.type(searchBarSelector, contactName);
+    await page.click(searchBarSelector, { clickCount: 3 });
+    await page.type(searchBarSelector, name);
     await delay(1000);
     await page.keyboard.press("Enter");
     await delay(1000);
 
-    // Step 2: select message input
+    // Step 5: Type and send confirmation message
     const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
     await page.waitForSelector(inputSelector, { timeout: 30000 });
-
-    // Step 3: send message
     await page.focus(inputSelector);
+
+    const message = "Connection with Dealmaker is successful ✅";
     await page.type(inputSelector, message);
     await delay(1000);
     await page.keyboard.press("Enter");
     await delay(1000);
 
-    console.log("✅ Confirmation message sent to 'me'");
-    return res.status(200).json({ success: true });
+    console.log(`✅ Confirmation message sent to yourself (${name})`);
+    return res.status(200).json({ success: true, selfName: name });
   } catch (error) {
-    console.error("❌ Failed to send connection confirmation message:", error);
-    return res.status(500).json({ error: "Failed to send connection confirmation message" });
+    console.error("❌ Failed during check-connection:", error);
+    return res.status(500).json({ error: "Failed to complete check-connection flow" });
   }
 });
 

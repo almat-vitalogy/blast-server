@@ -17,7 +17,6 @@ const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.use(express.json());
-// app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 // ------------------ Storage --------------------
@@ -552,6 +551,8 @@ app.post("/message-composer/generate", async (req, res) => {
     res.status(500).send("Failed to generate message.");
   }
 });
+
+app.use(cors()); // allow cross-origin requests
 
 const PORT = process.env.PORT || 5002;
 http

@@ -50,8 +50,9 @@ async function initWTS(userId) {
   const page = await browser.newPage();
   await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
-  // Get the QR code
   await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
+
+  // Get and save QR code
   await page.waitForSelector("canvas", { timeout: 60000 });
   const qrCodeElement = await page.$("canvas");
   const qrDir = path.join(__dirname, "public", "qrcodes");
@@ -68,7 +69,7 @@ async function initWTS(userId) {
   return {
     browser,
     page,
-    qrCodeUrl: `/qrcodes/${qrFilename}`, // ⬅️ Return this to the frontend
+    qrCodeUrl: `/qrcodes/${qrFilename}`,
   };
 }
 
@@ -200,6 +201,75 @@ app.post("/send-message", async (req, res) => {
   }
 
   return res.status(200).json({ success: true });
+});
+
+app.post("/check-connection", async (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  const user = users[userId];
+  if (!user || !user.page) {
+    return res.status(404).json({ error: "User session not found" });
+  }
+
+  const page = user.page;
+
+  try {
+    console.log(`🔍 Checking connection for user: ${userId}`);
+
+    // Step 1: Click profile button using Puppeteer extended XPath selector
+    const profileBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[2]/div[2]/button)', {
+      timeout: 10000,
+    });
+    await profileBtn.click();
+    await delay(1000); // Let profile screen load
+
+    // Step 2: Extract 'Your name' using XPath selector
+    const nameSpan = await page.waitForSelector(
+      '::-p-xpath(//*[@id="app"]/div/div[3]/div/div[2]/div[1]/span/div/div/span/div/div/div[2]/div[2]/div/div/span/span)',
+      { timeout: 10000 }
+    );
+    const name = await page.evaluate((el) => el.textContent, nameSpan);
+    if (!name) throw new Error("❌ Failed to extract name content");
+    console.log(`📛 Extracted name: ${name}`);
+
+    // Step 3: Return to chats by clicking the Chats button via XPath
+    const chatsBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[1]/div[1]/button)', {
+      timeout: 10000,
+    });
+    await chatsBtn.click();
+    await delay(1000);
+
+    // Step 4: Use the search bar to find yourself
+    const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
+    await page.waitForSelector(searchBarSelector, { timeout: 10000 });
+    await page.focus(searchBarSelector);
+    await page.click(searchBarSelector, { clickCount: 3 });
+    await page.type(searchBarSelector, name);
+    await delay(1000);
+    await page.keyboard.press("Enter");
+    await delay(1000);
+
+    // Step 5: Type and send confirmation message
+    const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
+    await page.waitForSelector(inputSelector, { timeout: 30000 });
+    await page.focus(inputSelector);
+
+    const message = "Connection with Dealmaker is successful ✅";
+    await page.type(inputSelector, message);
+    await delay(1000);
+    await page.keyboard.press("Enter");
+    await delay(1000);
+
+    console.log(`✅ Confirmation message sent to yourself (${name})`);
+    return res.status(200).json({ success: true, selfName: name });
+  } catch (error) {
+    console.error("❌ Failed during check-connection:", error);
+    return res.status(500).json({ error: "Failed to complete check-connection flow" });
+  }
 });
 
 app.post("/scrape-contacts", async (req, res) => {

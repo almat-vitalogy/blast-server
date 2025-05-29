@@ -1,7 +1,7 @@
 #!/bin/bash
 
 export DISPLAY=:99
-export PORT=5001
+export PORT=5004
 
 echo "🔄 Cleaning up old Xvfb processes..."
 sudo pkill -f "Xvfb :99" 2>/dev/null || true

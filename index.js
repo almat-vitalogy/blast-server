@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
+const cors = require("cors"); //commented out in production
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
@@ -10,8 +10,11 @@ const { v4: uuidv4 } = require("uuid");
 
 const BlastMessage = require("./models/BlastMessage");
 
+// BELOW LINE #1 (ADDED): import subscriptionRoutes
 const stripeRoutes = require("./routes/stripeRoutes");
 const stripeWebhook = require("./routes/stripeWebhook");
+const subscriptionRoutes = require("./routes/subscriptionRoutes");
+
 const contactRoutes = require("./routes/contactRoutes");
 const blastMessageRoutes = require("./routes/blastMessageRoutes");
 const activityRoutes = require("./routes/activityRoutes");
@@ -32,10 +35,14 @@ app.use('/stripe/webhook', stripeWebhook);
 
 // Then we can apply normal middlewares
 app.use(express.json());
-app.use(cors()); // allow cross-origin requests
+// app.use(cors()); // allow cross-origin requests if needed
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 app.use("/api/stripe", stripeRoutes);
+
+// BELOW LINE #2 (ADDED): mount subscriptionRoutes
+app.use("/api/subscriptions", subscriptionRoutes);
+
 app.use("/api/contacts", contactRoutes);
 app.use("/api/blast-messages", blastMessageRoutes);
 app.use("/api/activities", activityRoutes);

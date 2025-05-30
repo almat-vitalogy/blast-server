@@ -11,6 +11,7 @@ const { v4: uuidv4 } = require("uuid");
 const BlastMessage = require("./models/BlastMessage");
 
 const stripeRoutes = require("./routes/stripeRoutes");
+const stripeWebhook = require("./routes/stripeWebhook");
 const contactRoutes = require("./routes/contactRoutes");
 const blastMessageRoutes = require("./routes/blastMessageRoutes");
 const activityRoutes = require("./routes/activityRoutes");
@@ -25,6 +26,11 @@ connectDB();
 // Initialize App
 const app = express();
 
+// --- 1) Stripe Webhook route must come BEFORE body-parsing middleware ---
+app.use('/stripe/webhook', stripeWebhook);
+// -----------------------------------------------------------------------
+
+// Then we can apply normal middlewares
 app.use(express.json());
 app.use(cors()); // allow cross-origin requests
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));

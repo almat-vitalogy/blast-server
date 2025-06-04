@@ -30,7 +30,7 @@ connectDB();
 const app = express();
 
 // --- 1) Stripe Webhook route must come BEFORE body-parsing middleware ---
-app.use('/stripe/webhook', stripeWebhook);
+app.use("/stripe/webhook", stripeWebhook);
 // -----------------------------------------------------------------------
 
 // Then we can apply normal middlewares
@@ -57,11 +57,19 @@ const users = {};
 async function initWTS(userId) {
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-accelerated-2d-canvas", "--disable-gpu"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--disable-gpu",
+    ],
   });
 
   const page = await browser.newPage();
-  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  );
 
   await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
 
@@ -233,55 +241,206 @@ app.post("/check-connection", async (req, res) => {
   try {
     console.log(`🔍 Checking connection for user: ${userId}`);
 
-    // Step 1: Click profile button using Puppeteer extended XPath selector
-    const profileBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[2]/div[2]/button)', {
-      timeout: 10000,
-    });
-    await profileBtn.click();
-    await delay(1000); // Let profile screen load
+    // Helper function for robust element waiting
+    const waitForAnySelector = async (selectors, timeout = 10000) => {
+      const promises = selectors.map((selector) => page.waitForSelector(selector, { timeout }).catch(() => null));
+      const results = await Promise.allSettled(promises);
+      const found = results.find((result) => result.status === "fulfilled" && result.value);
+      if (found) return found.value;
+      throw new Error(`None of the selectors found: ${selectors.join(", ")}`);
+    };
 
-    // Step 2: Extract 'Your name' using XPath selector
-    const nameSpan = await page.waitForSelector(
-      '::-p-xpath(//*[@id="app"]/div/div[3]/div/div[2]/div[1]/span/div/div/span/div/div/div[2]/div[2]/div/div/span/span)',
-      { timeout: 10000 }
-    );
-    const name = await page.evaluate((el) => el.textContent, nameSpan);
-    if (!name) throw new Error("❌ Failed to extract name content");
-    console.log(`📛 Extracted name: ${name}`);
+    // Step 1: Click settings/profile button - using DOM inspection data
+    console.log("🔍 Looking for settings button...");
+    const settingsSelectors = [
+      // Primary: Based on your DOM inspection - settings icon
+      'span[data-icon="settings-outline"]',
+      'button:has(span[data-icon="settings-outline"])',
+      '[data-icon="settings-outline"]',
+      // Secondary: Generic settings patterns
+      'button[aria-label*="Menu"]',
+      'button[aria-label*="Settings"]',
+      'header button:has([data-icon*="settings"])',
+      // Fallback to your working XPath
+      '::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[2]/div[1]/button)',
+      // Last resort - position based
+      "header button:last-child",
+    ];
 
-    // Step 3: Return to chats by clicking the Chats button via XPath
-    const chatsBtn = await page.waitForSelector('::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[1]/div[1]/button)', {
-      timeout: 10000,
-    });
-    await chatsBtn.click();
-    await delay(1000);
+    const settingsBtn = await waitForAnySelector(settingsSelectors);
+    await settingsBtn.click();
+    console.log("✅ Settings button clicked");
 
-    // Step 4: Use the search bar to find yourself
+    // Wait for profile drawer to appear
+    await delay(1500);
+
+    // Step 2: Extract name using title attribute (from your DOM inspection)
+    console.log("🔍 Looking for user name...");
+    let name = null;
+
+    const nameStrategies = [
+      // Strategy 1: Use title attribute (most reliable from your DOM)
+      async () => {
+        const nameSelectors = ['span[title]:not([title=""])', 'span[dir="auto"][title]'];
+
+        for (const selector of nameSelectors) {
+          try {
+            const elements = await page.$(selector);
+            for (const element of elements) {
+              const title = await page.evaluate((el) => el.getAttribute("title"), element);
+              const text = await page.evaluate((el) => el.textContent, element);
+
+              // Check if this looks like a user name (not system text)
+              if (
+                title &&
+                title.length > 1 &&
+                title.length < 50 &&
+                !title.includes("WhatsApp") &&
+                !title.includes("Settings") &&
+                !title.includes("Profile") &&
+                !title.match(/^\+?\d/) && // Not a phone number
+                title === text
+              ) {
+                // Title matches displayed text
+                return title.trim();
+              }
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+        return null;
+      },
+
+      // Strategy 2: Look for name in profile section with specific classes
+      async () => {
+        const profileSelectors = [
+          "div.x1c4vz4f span[title]", // Based on your DOM structure
+          "button:nth-child(1) span[title]", // First button in profile
+          'div[dir="auto"] span[title]',
+        ];
+
+        for (const selector of profileSelectors) {
+          try {
+            const element = await page.$(selector);
+            if (element) {
+              const title = await page.evaluate((el) => el.getAttribute("title"), element);
+              if (title && title.length > 1 && title.length < 50) {
+                return title.trim();
+              }
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+        return null;
+      },
+
+      // Strategy 3: Your original XPath as fallback
+      async () => {
+        try {
+          const nameSpan = await page.$(
+            '::-p-xpath(//*[@id="app"]/div/div[3]/div/div[2]/div[1]/span/div/span/div/div/div/div[2]/div/div/div/button[1]/div/div/div[2]/div[1]/div/div/span)'
+          );
+          if (nameSpan) {
+            const text = await page.evaluate((el) => el.textContent, nameSpan);
+            const title = await page.evaluate((el) => el.getAttribute("title"), nameSpan);
+            return title || text;
+          }
+        } catch (e) {
+          return null;
+        }
+      },
+    ];
+
+    // Try each strategy until one works
+    for (let i = 0; i < nameStrategies.length; i++) {
+      try {
+        name = await nameStrategies[i]();
+        if (name) {
+          console.log(`📛 Name found using strategy ${i + 1}: ${name}`);
+          break;
+        }
+      } catch (e) {
+        console.log(`⚠️ Name extraction strategy ${i + 1} failed, trying next...`);
+        continue;
+      }
+    }
+
+    if (!name) {
+      throw new Error("❌ Failed to extract name with any strategy");
+    }
+
+    // Step 3: Navigate back to chats - click outside or use back button
+    console.log("🔍 Navigating back to chats...");
+
+    // Try clicking outside the drawer first (easier and more reliable)
+    try {
+      await page.click("body", { offset: { x: 100, y: 100 } });
+      await delay(1000);
+    } catch (e) {
+      // If clicking outside fails, try back button
+      const backSelectors = [
+        '[data-icon="back"]',
+        'button[aria-label*="Back"]',
+        'button[aria-label*="Close"]',
+        '::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[1]/div[1]/button)',
+        "header button:first-child",
+      ];
+
+      const backBtn = await waitForAnySelector(backSelectors);
+      await backBtn.click();
+    }
+
+    console.log("✅ Back to chats");
+    await delay(1500);
+
+    // Step 4: Use search bar (your existing selector works well)
+    console.log("🔍 Looking for search bar...");
+    await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 10000 });
     const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
-    await page.waitForSelector(searchBarSelector, { timeout: 10000 });
     await page.focus(searchBarSelector);
-    await page.click(searchBarSelector, { clickCount: 3 });
     await page.type(searchBarSelector, name);
-    await delay(1000);
+    await delay(1500);
     await page.keyboard.press("Enter");
-    await delay(1000);
+    console.log("✅ Typed name");
 
-    // Step 5: Type and send confirmation message
+    // Step 5: Wait for chat input
     const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
     await page.waitForSelector(inputSelector, { timeout: 30000 });
-    await page.focus(inputSelector);
 
+    // Step 6: Focus input and type message
     const message = "Connection with Dealmaker is successful ✅";
+    await page.focus(inputSelector);
     await page.type(inputSelector, message);
-    await delay(1000);
+    await delay(1000); // Ensure message is typed
     await page.keyboard.press("Enter");
-    await delay(1000);
+    await delay(1000); // Wait for message to send
 
     console.log(`✅ Confirmation message sent to yourself (${name})`);
     return res.status(200).json({ success: true, selfName: name });
   } catch (error) {
-    console.error("❌ Failed during check-connection:", error);
-    return res.status(500).json({ error: "Failed to complete check-connection flow" });
+    console.error("❌ Failed during check-connection:", error.message);
+
+    // Additional debugging info
+    try {
+      const currentUrl = page.url();
+      const title = await page.title();
+      console.log(`Debug info - URL: ${currentUrl}, Title: ${title}`);
+
+      // Log available elements for debugging
+      const availableIcons = await page.$eval("[data-icon]", (els) =>
+        els.map((el) => el.getAttribute("data-icon")).filter(Boolean)
+      );
+      console.log("Available data-icons:", availableIcons);
+    } catch (e) {
+      console.log("Could not get debug info: ", e);
+    }
+
+    return res.status(500).json({
+      error: "Failed to complete check-connection flow",
+      details: error.message,
+    });
   }
 });
 
@@ -314,7 +473,9 @@ app.post("/scrape-contacts", async (req, res) => {
         const result = [];
 
         nodes.forEach((el) => {
-          const isGroup = !!el.querySelector('span[data-icon="default-group"]') || !!el.querySelector('span[data-icon="default-user-group"]');
+          const isGroup =
+            !!el.querySelector('span[data-icon="default-group"]') ||
+            !!el.querySelector('span[data-icon="default-user-group"]');
           if (isGroup) return;
 
           const chatDiv = el.querySelector("[data-id]");
@@ -351,7 +512,6 @@ app.post("/scrape-contacts", async (req, res) => {
     res.status(500).json({ error: "Failed to scrape contacts" });
   }
 });
-
 
 const PORT = process.env.PORT || 5002;
 http

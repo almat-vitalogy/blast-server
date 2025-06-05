@@ -9,45 +9,34 @@ const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 
 const BlastMessage = require("./models/BlastMessage");
-
-// BELOW LINE #1 (ADDED): import subscriptionRoutes
 const stripeRoutes = require("./routes/stripeRoutes");
 const stripeWebhook = require("./routes/stripeWebhook");
 const subscriptionRoutes = require("./routes/subscriptionRoutes");
-
 const contactRoutes = require("./routes/contactRoutes");
 const blastMessageRoutes = require("./routes/blastMessageRoutes");
 const activityRoutes = require("./routes/activityRoutes");
-// const whatsappRoutes = require("./routes/whatsappRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const messageComposerRoutes = require("./routes/messageComposerRoutes");
+const labelRoutes = require("./routes/labelRoutes");
 
-// Database connection
 const connectDB = require("./config/db");
 connectDB();
-
-// Initialize App
 const app = express();
 
-// --- 1) Stripe Webhook route must come BEFORE body-parsing middleware ---
 app.use("/stripe/webhook", stripeWebhook);
-// -----------------------------------------------------------------------
-
-// Then we can apply normal middlewares
 app.use(express.json());
-// app.use(cors()); // allow cross-origin requests if needed
+if (process.env.ENV === "dev") {
+  app.use(cors());
+}
 app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
+app.use("/api/labels", labelRoutes);
 app.use("/api/stripe", stripeRoutes);
-
-// BELOW LINE #2 (ADDED): mount subscriptionRoutes
 app.use("/api/subscriptions", subscriptionRoutes);
-
 app.use("/api/contacts", contactRoutes);
 app.use("/api/blast-messages", blastMessageRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-// app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/message-composer", messageComposerRoutes);
 
 // ------------------ Storage --------------------
@@ -98,7 +87,7 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ------------------ Routes ---------------------
+// ------------------ puppeteer activities ---------------------
 app.get("/", (req, res) => res.send("deal maker server is running developement"));
 
 app.post("/connect-user", async (req, res) => {
@@ -175,29 +164,32 @@ app.post("/send-message", async (req, res) => {
     userEmail,
     title,
   });
-  // const whatsappUrl = "https://web.whatsapp.com";
-  // await page.goto(whatsappUrl, { waitUntil: "networkidle2" });
+
   for (const phoneNumber of phoneNumbers) {
     try {
-      // Step 1: select searchbar and search for the contact
-      await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 10000 });
+      // search for the contact
       const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
+      await page.waitForSelector(searchBarSelector, { timeout: 10000 });
       await page.focus(searchBarSelector);
       await page.type(searchBarSelector, phoneNumber);
-      await delay(1000); // Wait for search results to load
+      await delay(500);
       await page.keyboard.press("Enter");
-      await delay(1000); // Wait for chat to load
+      await delay(500);
 
-      // Step 2: Wait for chat input
+      // send the message
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
-      await page.waitForSelector(inputSelector, { timeout: 30000 });
-
-      // Step 3: Focus input and type message
+      await page.waitForSelector(inputSelector, { timeout: 10_000 });
       await page.focus(inputSelector);
-      await page.type(inputSelector, message);
-      await delay(1000); // Ensure message is typed
+      const lines = message.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        await page.keyboard.type(lines[i]);
+        if (i !== lines.length - 1) {
+          await page.keyboard.down("Shift");
+          await page.keyboard.press("Enter");
+          await page.keyboard.up("Shift");
+        }
+      }
       await page.keyboard.press("Enter");
-      await delay(1000); // Wait for message to send
 
       console.log(`✅ Message sent to ${phoneNumber}: ${message}`);
     } catch (error) {
@@ -219,6 +211,7 @@ app.post("/send-message", async (req, res) => {
     console.log("📦 Blast message saved:", title);
   } catch (err) {
     console.error("❌ Failed to save blast message:", err.message);
+    return res.status(500).json({ error: "Failed to save message" });
   }
 
   return res.status(200).json({ success: true });
@@ -238,209 +231,79 @@ app.post("/check-connection", async (req, res) => {
 
   const page = user.page;
 
+  console.log(`Checking connection for user ${userId}`);
+
   try {
-    console.log(`🔍 Checking connection for user: ${userId}`);
+    // Search for "(You)" query
+    const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
+    await page.waitForSelector(searchBarSelector, { timeout: 10000 });
+    await page.focus(searchBarSelector);
+    await page.type(searchBarSelector, "(You)");
+    await delay(500);
+    await page.keyboard.press("Enter");
+    await delay(500);
 
-    // Helper function for robust element waiting
-    const waitForAnySelector = async (selectors, timeout = 10000) => {
-      const promises = selectors.map((selector) => page.waitForSelector(selector, { timeout }).catch(() => null));
-      const results = await Promise.allSettled(promises);
-      const found = results.find((result) => result.status === "fulfilled" && result.value);
-      if (found) return found.value;
-      throw new Error(`None of the selectors found: ${selectors.join(", ")}`);
-    };
+    // Wait for search results to load
+    const searchResultsSelector = 'div[aria-label="Search results."][role="grid"]';
+    await page.waitForSelector(searchResultsSelector, { timeout: 10000 });
+    await delay(1000);
 
-    // Step 1: Click settings/profile button - using DOM inspection data
-    console.log("🔍 Looking for settings button...");
-    const settingsSelectors = [
-      // Primary: Based on your DOM inspection - settings icon
-      'span[data-icon="settings-outline"]',
-      'button:has(span[data-icon="settings-outline"])',
-      '[data-icon="settings-outline"]',
-      // Secondary: Generic settings patterns
-      'button[aria-label*="Menu"]',
-      'button[aria-label*="Settings"]',
-      'header button:has([data-icon*="settings"])',
-      // Fallback to your working XPath
-      '::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[2]/div[1]/button)',
-      // Last resort - position based
-      "header button:last-child",
-    ];
+    // Get all search result items
+    const searchResultItems = await page.$$(`${searchResultsSelector} div[role="listitem"]`);
+    console.log(`Found ${searchResultItems.length} search result items`);
 
-    const settingsBtn = await waitForAnySelector(settingsSelectors);
-    await settingsBtn.click();
-    console.log("✅ Settings button clicked");
+    let messageYourselfFound = false;
 
-    // Wait for profile drawer to appear
-    await delay(1500);
-
-    // Step 2: Extract name using title attribute (from your DOM inspection)
-    console.log("🔍 Looking for user name...");
-    let name = null;
-
-    const nameStrategies = [
-      // Strategy 1: Use title attribute (most reliable from your DOM)
-      async () => {
-        const nameSelectors = ['span[title]:not([title=""])', 'span[dir="auto"][title]'];
-
-        for (const selector of nameSelectors) {
-          try {
-            const elements = await page.$(selector);
-            for (const element of elements) {
-              const title = await page.evaluate((el) => el.getAttribute("title"), element);
-              const text = await page.evaluate((el) => el.textContent, element);
-
-              // Check if this looks like a user name (not system text)
-              if (
-                title &&
-                title.length > 1 &&
-                title.length < 50 &&
-                !title.includes("WhatsApp") &&
-                !title.includes("Settings") &&
-                !title.includes("Profile") &&
-                !title.match(/^\+?\d/) && // Not a phone number
-                title === text
-              ) {
-                // Title matches displayed text
-                return title.trim();
-              }
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-        return null;
-      },
-
-      // Strategy 2: Look for name in profile section with specific classes
-      async () => {
-        const profileSelectors = [
-          "div.x1c4vz4f span[title]", // Based on your DOM structure
-          "button:nth-child(1) span[title]", // First button in profile
-          'div[dir="auto"] span[title]',
-        ];
-
-        for (const selector of profileSelectors) {
-          try {
-            const element = await page.$(selector);
-            if (element) {
-              const title = await page.evaluate((el) => el.getAttribute("title"), element);
-              if (title && title.length > 1 && title.length < 50) {
-                return title.trim();
-              }
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-        return null;
-      },
-
-      // Strategy 3: Your original XPath as fallback
-      async () => {
-        try {
-          const nameSpan = await page.$(
-            '::-p-xpath(//*[@id="app"]/div/div[3]/div/div[2]/div[1]/span/div/span/div/div/div/div[2]/div/div/div/button[1]/div/div/div[2]/div[1]/div/div/span)'
-          );
-          if (nameSpan) {
-            const text = await page.evaluate((el) => el.textContent, nameSpan);
-            const title = await page.evaluate((el) => el.getAttribute("title"), nameSpan);
-            return title || text;
-          }
-        } catch (e) {
-          return null;
-        }
-      },
-    ];
-
-    // Try each strategy until one works
-    for (let i = 0; i < nameStrategies.length; i++) {
+    // Iterate through each search result item
+    for (let i = 0; i < searchResultItems.length; i++) {
       try {
-        name = await nameStrategies[i]();
-        if (name) {
-          console.log(`📛 Name found using strategy ${i + 1}: ${name}`);
-          break;
+        console.log(`Checking search result item ${i + 1}/${searchResultItems.length}`);
+
+        // Click on the search result item
+        await searchResultItems[i].click();
+        await delay(1000);
+
+        // Check if this chat contains the "Message yourself" span
+        const messageYourselfSpan = await page.$('span[title="Message yourself"]');
+
+        if (messageYourselfSpan) {
+          // Verify the span text content matches exactly
+          const spanText = await page.evaluate((el) => el.textContent, messageYourselfSpan);
+
+          if (spanText === "Message yourself") {
+            console.log("✅ Found 'Message yourself' chat!");
+            messageYourselfFound = true;
+
+            // Send the confirmation message
+            const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
+            await page.waitForSelector(inputSelector, { timeout: 10000 });
+            await page.focus(inputSelector);
+            await page.type(inputSelector, "Connection with Dealmaker is successful ✅");
+            await delay(500);
+            await page.keyboard.press("Enter");
+            await delay(500);
+
+            console.log("✅ Confirmation message sent successfully!");
+            break; // Exit the loop as we found and messaged the correct chat
+          }
         }
-      } catch (e) {
-        console.log(`⚠️ Name extraction strategy ${i + 1} failed, trying next...`);
+
+        console.log(`❌ Item ${i + 1} is not the 'Message yourself' chat`);
+      } catch (itemError) {
+        console.error(`Error processing search result item ${i + 1}:`, itemError);
         continue;
       }
     }
 
-    if (!name) {
-      throw new Error("❌ Failed to extract name with any strategy");
+    if (!messageYourselfFound) {
+      console.log("❌ 'Message yourself' chat not found in search results");
+      return false;
     }
 
-    // Step 3: Navigate back to chats - click outside or use back button
-    console.log("🔍 Navigating back to chats...");
-
-    // Try clicking outside the drawer first (easier and more reliable)
-    try {
-      await page.click("body", { offset: { x: 100, y: 100 } });
-      await delay(1000);
-    } catch (e) {
-      // If clicking outside fails, try back button
-      const backSelectors = [
-        '[data-icon="back"]',
-        'button[aria-label*="Back"]',
-        'button[aria-label*="Close"]',
-        '::-p-xpath(//*[@id="app"]/div/div[3]/div/header/div/div/div/div/span/div/div[1]/div[1]/button)',
-        "header button:first-child",
-      ];
-
-      const backBtn = await waitForAnySelector(backSelectors);
-      await backBtn.click();
-    }
-
-    console.log("✅ Back to chats");
-    await delay(1500);
-
-    // Step 4: Use search bar (your existing selector works well)
-    console.log("🔍 Looking for search bar...");
-    await page.waitForSelector('div[contenteditable="true"][data-tab="3"]', { timeout: 10000 });
-    const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
-    await page.focus(searchBarSelector);
-    await page.type(searchBarSelector, name);
-    await delay(1500);
-    await page.keyboard.press("Enter");
-    console.log("✅ Typed name");
-
-    // Step 5: Wait for chat input
-    const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
-    await page.waitForSelector(inputSelector, { timeout: 30000 });
-
-    // Step 6: Focus input and type message
-    const message = "Connection with Dealmaker is successful ✅";
-    await page.focus(inputSelector);
-    await page.type(inputSelector, message);
-    await delay(1000); // Ensure message is typed
-    await page.keyboard.press("Enter");
-    await delay(1000); // Wait for message to send
-
-    console.log(`✅ Confirmation message sent to yourself (${name})`);
-    return res.status(200).json({ success: true, selfName: name });
+    return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ Failed during check-connection:", error.message);
-
-    // Additional debugging info
-    try {
-      const currentUrl = page.url();
-      const title = await page.title();
-      console.log(`Debug info - URL: ${currentUrl}, Title: ${title}`);
-
-      // Log available elements for debugging
-      const availableIcons = await page.$eval("[data-icon]", (els) =>
-        els.map((el) => el.getAttribute("data-icon")).filter(Boolean)
-      );
-      console.log("Available data-icons:", availableIcons);
-    } catch (e) {
-      console.log("Could not get debug info: ", e);
-    }
-
-    return res.status(500).json({
-      error: "Failed to complete check-connection flow",
-      details: error.message,
-    });
+    console.error("❌ Error in findAndMessageYourself:", error);
+    return res.status(500);
   }
 });
 
@@ -459,15 +322,14 @@ app.post("/scrape-contacts", async (req, res) => {
   const page = user.page;
 
   try {
-    await page.goto("https://web.whatsapp.com", { waitUntil: "networkidle2" });
-    await page.waitForSelector("div[role='grid']", { timeout: 60000 });
+    await page.waitForSelector("div[role='grid']", { timeout: 10000 });
     await page.hover("div[role='grid']");
 
     const phoneNumbersSet = new Set();
 
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       await page.mouse.wheel({ deltaY: 1280 });
-      await delay(1000);
+      await delay(500);
 
       const numbers = await page.$$eval("div[role='grid'] > div", (nodes) => {
         const result = [];
@@ -506,12 +368,13 @@ app.post("/scrape-contacts", async (req, res) => {
 
     const phoneNumbers = Array.from(phoneNumbersSet);
     console.log(`📥 Scraped ${phoneNumbers.length} phone numbers`);
-    res.status(200).json({ phoneNumbers });
+    return res.status(200).json({ phoneNumbers });
   } catch (error) {
     console.error("❌ Failed to scrape contacts:", error);
-    res.status(500).json({ error: "Failed to scrape contacts" });
+    return res.status(500).json({ error: "Failed to scrape contacts" });
   }
 });
+// ------------------ label activities ---------------------
 
 const PORT = process.env.PORT || 5002;
 http

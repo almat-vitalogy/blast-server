@@ -54,23 +54,22 @@ router.delete("/delete-label/:labelId", async (req, res) => {
  * { contactId, labelId }
  * --------------------------------------------------------- */
 router.post("/toggle-label", async (req, res) => {
+  console.log("toggle-label:", req.body);
   try {
     let { contactId, labelId } = req.body;
-    contactId = Number(contactId);
-    labelId = Number(labelId);
     if (!contactId || !labelId) return res.status(400).json({ error: "contactId and labelId required" });
 
     const contact = await Contact.findById(contactId);
     const label = await Label.findById(labelId);
     if (!contact || !label) return res.status(404).json({ error: "Contact or label not found" });
 
-    const hasIt = contact.labelIds.includes(labelId);
+    const hasIt = contact.labels.includes(labelId);
 
     // atomic twin-update using $addToSet / $pull
     await Promise.all([
       Contact.updateOne(
         { _id: contactId },
-        hasIt ? { $pull: { labelIds: labelId } } : { $addToSet: { labelIds: labelId } }
+        hasIt ? { $pull: { labels: labelId } } : { $addToSet: { labels: labelId } }
       ),
       Label.updateOne(
         { _id: labelId },
@@ -78,7 +77,7 @@ router.post("/toggle-label", async (req, res) => {
       ),
     ]);
 
-    return res.json({ success: true, mode: hasIt ? "detached" : "attached" });
+    return res.status(200).json({ success: true, mode: hasIt ? "detached" : "attached" });
   } catch (err) {
     console.error("toggle-label:", err);
     return res.status(500).json({ error: "Server error toggling label" });

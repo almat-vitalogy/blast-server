@@ -9,7 +9,7 @@ const ContactSchema = new mongoose.Schema({
       return this.phone;
     },
   },
-  labels: [{ type: String }],
+  labels: [{ type: String }], //actually labelIds from Label model
 });
 
 ContactSchema.index({ userEmail: 1, phone: 1 }, { unique: true });

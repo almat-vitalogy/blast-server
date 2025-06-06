@@ -16,7 +16,6 @@ const labelSchema = new Schema(
       type: String,
       required: true,
       trim: true,
-      unique: true,
     },
     color: {
       type: String,
@@ -25,7 +24,6 @@ const labelSchema = new Schema(
     userEmail: {
       type: String,
       required: true,
-      unique: true,
       lowercase: true,
       trim: true,
     },

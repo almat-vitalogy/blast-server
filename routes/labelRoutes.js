@@ -100,4 +100,64 @@ router.get("/get-labels", async (req, res) => {
   }
 });
 
+/* -----------------------------------------------------------
+ * POST /api/labels/mass-assign-label
+ * { contactIds: string[], labelId, userEmail }
+ * --------------------------------------------------------- */
+router.post("/mass-assign-label", async (req, res) => {
+  try {
+    const { contactIds, labelId, userEmail } = req.body;
+    if (!Array.isArray(contactIds) || contactIds.length === 0 || !labelId)
+      return res.status(400).json({ error: "contactIds[] and labelId are required" });
+
+    // ensure label exists & belongs to the user
+    const label = await Label.findOne({ _id: labelId, userEmail });
+    if (!label) return res.status(404).json({ error: "Label not found" });
+
+    /* 1) add the label to each contact (skip if already present) */
+    const { modifiedCount } = await Contact.updateMany(
+      { _id: { $in: contactIds }, userEmail },
+      { $addToSet: { labels: labelId } }
+    );
+
+    /* 2) add the contacts to label.contactIds */
+    await Label.updateOne({ _id: labelId }, { $addToSet: { contactIds: { $each: contactIds } } });
+
+    return res.json({ success: true, affected: modifiedCount });
+  } catch (err) {
+    console.error("mass-assign-label:", err);
+    return res.status(500).json({ error: "Server error mass-assigning label" });
+  }
+});
+
+/* -----------------------------------------------------------
+ * POST /api/labels/mass-deassign-label
+ * { contactIds: string[], labelId, userEmail }
+ * --------------------------------------------------------- */
+router.post("/mass-deassign-label", async (req, res) => {
+  try {
+    const { contactIds, labelId, userEmail } = req.body;
+    if (!Array.isArray(contactIds) || contactIds.length === 0 || !labelId)
+      return res.status(400).json({ error: "contactIds[] and labelId are required" });
+
+    // ensure label exists & belongs to the user
+    const label = await Label.findOne({ _id: labelId, userEmail });
+    if (!label) return res.status(404).json({ error: "Label not found" });
+
+    /* 1) pull the label from the listed contacts */
+    const { modifiedCount } = await Contact.updateMany(
+      { _id: { $in: contactIds }, userEmail },
+      { $pull: { labels: labelId } }
+    );
+
+    /* 2) pull those contacts from label.contactIds */
+    await Label.updateOne({ _id: labelId }, { $pull: { contactIds: { $in: contactIds } } });
+
+    return res.json({ success: true, affected: modifiedCount });
+  } catch (err) {
+    console.error("mass-deassign-label:", err);
+    return res.status(500).json({ error: "Server error mass-deassigning label" });
+  }
+});
+
 module.exports = router;

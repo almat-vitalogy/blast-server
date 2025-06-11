@@ -87,6 +87,39 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isValidPhoneNumber(phone) {
+  if (typeof phone !== "string") return false;
+  const cleaned = phone.replace(/[\s\-().]/g, "");
+  const phoneRegex = /^\+?\d{6,15}$/;
+  return phoneRegex.test(cleaned);
+}
+
+const getAllVisibleContacts = async (page) => {
+  // Get all contact elements as ElementHandles
+  const allContactElements = await page.$$("div[role='grid'] > div");
+
+  // Filter to only visible ones
+  const visibleContactElements = [];
+
+  for (const element of allContactElements) {
+    // Check if element is visible
+    const isVisible = await element.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.top >= 0 && rect.top < window.innerHeight;
+    });
+
+    if (isVisible) {
+      visibleContactElements.push(element);
+    } else {
+      // Dispose of non-visible elements to free memory
+      await element.dispose();
+    }
+  }
+
+  // Now you have actual ElementHandles you can interact with!
+  return visibleContactElements.slice(0, 10); // Limit to 10
+};
+
 // ------------------ puppeteer activities ---------------------
 app.get("/", (req, res) => res.send("deal maker server is running developement"));
 
@@ -321,54 +354,129 @@ app.post("/scrape-contacts", async (req, res) => {
 
   const page = user.page;
 
+  const CHATLIST = 'div[id="pane-side"]';
+  const HEADER = 'div[title="Profile details"]';
+  const SECONDARY = 'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]';
+  let successCount = 0;
+  let errorCount = 0;
+  const result = [];
+  const processedContacts = new Set();
+
   try {
-    await page.waitForSelector("div[role='grid']", { timeout: 10000 });
-    await page.hover("div[role='grid']");
+    let scrollPosition = 0;
+    let previousContactCount = 0;
+    let noNewContactsCount = 0;
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 50;
+    const scrollStep = 600;
+    console.log("🚀 Starting contact scraping...");
 
-    const phoneNumbersSet = new Set();
-
-    for (let i = 0; i < 30; i++) {
-      await page.mouse.wheel({ deltaY: 1280 });
-      await delay(500);
-
-      const numbers = await page.$$eval("div[role='grid'] > div", (nodes) => {
-        const result = [];
-
-        nodes.forEach((el) => {
-          const isGroup =
-            !!el.querySelector('span[data-icon="default-group"]') ||
-            !!el.querySelector('span[data-icon="default-user-group"]');
-          if (isGroup) return;
-
-          const chatDiv = el.querySelector("[data-id]");
-          if (chatDiv) {
-            const dataId = chatDiv.getAttribute("data-id");
-            const match = dataId && dataId.match(/(\d+)@c\.us/);
-            if (match) {
-              result.push(match[1]);
-              return;
-            }
-          }
-
-          const spans = el.querySelectorAll("span");
-          for (const span of spans) {
-            const text = span.textContent;
-            if (/^\+?\d[\d\s-]{8,}$/.test(text)) {
-              result.push(text.replace(/\s+/g, ""));
-              return;
-            }
-          }
-        });
-
-        return result;
+    while (scrollAttempts < maxScrollAttempts) {
+      await page.locator(CHATLIST).scroll({
+        scrollTop: scrollPosition,
       });
 
-      numbers.forEach((n) => phoneNumbersSet.add(n));
+      scrollAttempts++;
+      console.log(`📜 Scrolled ${scrollAttempts} times (position: ${scrollPosition})`);
+      await delay(800);
+
+      const visibleContacts = await getAllVisibleContacts(page);
+      const currentContactCount = visibleContacts.length;
+
+      console.log(`👥 Found ${currentContactCount} visible contacts`);
+
+      if (currentContactCount === previousContactCount) {
+        noNewContactsCount++;
+        console.log(`⚠️  No new contacts found (${noNewContactsCount}/3)`);
+
+        if (noNewContactsCount >= 3) {
+          console.log("🏁 Reached end of contact list");
+          break;
+        }
+      } else {
+        noNewContactsCount = 0;
+      }
+
+      previousContactCount = currentContactCount;
+
+      for (const contact of visibleContacts) {
+        try {
+          const contactId = await contact.evaluate((el) => {
+            const nameEl = el.querySelector('span[dir="auto"]');
+            return nameEl ? nameEl.textContent?.trim() : `contact-${Date.now()}-${Math.random()}`;
+          });
+
+          if (processedContacts.has(contactId)) {
+            console.log(`⏩ Skipping already processed contact: ${contactId}`);
+            continue;
+          }
+
+          processedContacts.add(contactId);
+
+          await contact.click();
+          await delay(300);
+
+          await page.locator(HEADER).click();
+          await delay(500);
+
+          const isGroup = await page.$('div[class="_alcd"]');
+          if (isGroup) {
+            console.log(`👥 Found a group: ${contactId}, skipping...`);
+            continue;
+          }
+
+          let phone = "Unknown";
+
+          const phoneElement = await page.$(SECONDARY);
+          if (phoneElement) {
+            try {
+              phone = await page.$eval(SECONDARY, (el) => el.textContent?.trim() || "Unknown");
+            } catch (phoneError) {
+              console.log(`🟡 Could not extract phone: ${phoneError.message}`);
+            }
+          } else {
+            console.log(`🟡 Phone element not found with selector: ${SECONDARY}`);
+          }
+
+          // Validate contactId and phone
+          let finalPhone = null;
+
+          if (isValidPhoneNumber(contactId)) {
+            finalPhone = contactId;
+          } else if (isValidPhoneNumber(phone)) {
+            finalPhone = phone;
+          } else {
+            errorCount++;
+            console.log(`❌ Invalid phone for contact: ${contactId} (${phone})`);
+            continue;
+          }
+
+          const contactData = { name: contactId, phone: finalPhone };
+          result.push(contactData);
+          successCount++;
+          console.log(`✅ Successfully scraped contact: ${contactId} - ${phone}`);
+        } catch (contactError) {
+          errorCount++;
+          console.log(`❌ Error processing contact ${errorCount}: ${contactError.message}`);
+          continue;
+        }
+      }
+      scrollPosition += scrollStep;
+      await delay(200);
     }
 
-    const phoneNumbers = Array.from(phoneNumbersSet);
-    console.log(`📥 Scraped ${phoneNumbers.length} phone numbers`);
-    return res.status(200).json({ phoneNumbers });
+    console.log(`\n📊 Final Scraping Summary:`);
+    console.log(`✅ Successfully scraped: ${successCount} contacts`);
+    console.log(`❌ Failed to scrape: ${errorCount} contacts`);
+    console.log(`📥 Total unique contacts: ${result.length}`);
+    console.log(`🔄 Total scroll attempts: ${scrollAttempts}`);
+    console.log(`📋 Scraped contacts:`, JSON.stringify(result, null, 2));
+
+    const phones = result.map((contact) => contact.phone).filter((phone) => phone && phone !== "Unknown");
+
+    console.log(`📱 Valid phone numbers: ${phones.length}`);
+
+    return res.status(200).json({ phoneNumbers: phones });
   } catch (error) {
     console.error("❌ Failed to scrape contacts:", error);
     return res.status(500).json({ error: "Failed to scrape contacts" });

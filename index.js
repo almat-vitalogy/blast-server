@@ -96,7 +96,7 @@ function isValidPhoneNumber(phone) {
 
 const getAllVisibleContacts = async (page) => {
   // Get all contact elements as ElementHandles
-  const allContactElements = await page.$$("div[role='grid'] > div");
+  const allContactElements = await page.$$("div[role='button'][tabindex='-1']");
 
   // Filter to only visible ones
   const visibleContactElements = [];
@@ -198,25 +198,54 @@ app.post("/send-message", async (req, res) => {
     title,
   });
 
+  const results = [];
   for (const phoneNumber of phoneNumbers) {
     try {
-      // search for the contact
+      /* 1. ── Search contact ─────────────────────────────────────────── */
       const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
-      await page.waitForSelector(searchBarSelector, { timeout: 10000 });
-      await page.focus(searchBarSelector);
-      await page.type(searchBarSelector, phoneNumber);
-      await delay(500);
-      await page.keyboard.press("Enter");
-      await delay(500);
+      await page.waitForSelector(searchBarSelector, { timeout: 10_000 });
+      const searchBar = await page.$(searchBarSelector);
 
-      // send the message
+      await searchBar.click({ clickCount: 3 });
+      await page.keyboard.press("Backspace");
+      await searchBar.type(phoneNumber);
+      await page.keyboard.press("Enter");
+      await delay(1_000);
+
+      /* 2. ── Grab contact labels ─────────────────────────────────────── */
+      const rawText1 = await page.$eval('div[class="x78zum5"] > span[dir="auto"]', (span) => span.innerText);
+      await page.locator('div[title="Profile details"]').click();
+      await delay(500);
+      const rawText2 = await page.$eval(
+        'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]',
+        (span) => span.innerText
+      );
+      await page.keyboard.press("Escape"); // close profile pane if opened
+
+      /* 3. ── Normalise strings for comparison ───────────────────────── */
+      const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+      const text1 = normalize(rawText1);
+      const text2 = normalize(rawText2);
+      const phone = normalize(phoneNumber);
+
+      const contactMatches = text1.includes(phone) || text2.includes(phone);
+
+      if (!contactMatches) {
+        console.log(`⚠️  ${phoneNumber} skipped – message text not found in contact titles`);
+        results.push({ phone: phoneNumber, status: "skipped", reason: "recipient mismatch" });
+        continue; // jump to next number
+      }
+
+      /* 4. ── Send message ───────────────────────────────────────────── */
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
       await page.waitForSelector(inputSelector, { timeout: 10_000 });
       await page.focus(inputSelector);
+
       const lines = message.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        await page.keyboard.type(lines[i]);
-        if (i !== lines.length - 1) {
+      for (const [idx, line] of lines.entries()) {
+        await page.keyboard.type(line);
+        if (idx !== lines.length - 1) {
           await page.keyboard.down("Shift");
           await page.keyboard.press("Enter");
           await page.keyboard.up("Shift");
@@ -224,10 +253,14 @@ app.post("/send-message", async (req, res) => {
       }
       await page.keyboard.press("Enter");
 
-      console.log(`✅ Message sent to ${phoneNumber}: ${message}`);
-    } catch (error) {
-      console.error("❌ Failed to send message:", error);
-      return res.status(500).json({ error: "Failed to send message" });
+      console.log(`✅ Sent to ${phoneNumber}`);
+      await delay(1000); // wait for message to send
+      results.push({ phone: phoneNumber, status: "sent" });
+    } catch (err) {
+      console.error(`❌ ${phoneNumber} failed:`, err.message);
+      await delay(1000); // wait for message to send
+      results.push({ phone: phoneNumber, status: "failed", reason: err.message });
+      continue; // keep looping
     }
   }
 
@@ -246,7 +279,10 @@ app.post("/send-message", async (req, res) => {
     console.error("❌ Failed to save blast message:", err.message);
     return res.status(500).json({ error: "Failed to save message" });
   }
-
+  const failed = results.filter((r) => r.status === "failed" || r.status === "skipped").length;
+  const sent = results.filter((r) => r.status === "sent").length;
+  console.log(`results:`, results);
+  console.log(`Sent ${sent} | Failed ${failed}`);
   return res.status(200).json({ success: true });
 });
 
@@ -354,133 +390,62 @@ app.post("/scrape-contacts", async (req, res) => {
 
   const page = user.page;
 
-  const CHATLIST = 'div[id="pane-side"]';
-  const HEADER = 'div[title="Profile details"]';
-  const SECONDARY = 'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]';
-  let successCount = 0;
-  let errorCount = 0;
-  const result = [];
-  const processedContacts = new Set();
+  await page.locator('span[data-icon="new-chat-outline"]').click();
+  await page.waitForSelector('div[data-tab="4"]', { timeout: 10000 });
+  await page.hover('div[data-tab="4"]');
 
-  try {
-    let scrollPosition = 0;
-    let previousContactCount = 0;
-    let noNewContactsCount = 0;
-    let scrollAttempts = 0;
-    const maxScrollAttempts = 50;
-    const scrollStep = 600;
-    console.log("🚀 Starting contact scraping...");
+  const resultSet = new Set(); // store unique contact IDs
+  const recentBatches = [];
+  const maxRepeats = 3;
 
-    while (scrollAttempts < maxScrollAttempts) {
-      await page.locator(CHATLIST).scroll({
-        scrollTop: scrollPosition,
-      });
+  for (let i = 0; i < 40; i++) {
+    const visibleContacts = await getAllVisibleContacts(page);
+    const currentBatch = [];
 
-      scrollAttempts++;
-      console.log(`📜 Scrolled ${scrollAttempts} times (position: ${scrollPosition})`);
-      await delay(800);
+    for (const contact of visibleContacts) {
+      try {
+        const contactId = await contact.evaluate((el) => {
+          const nameEl = el.querySelector('span[dir="auto"]');
+          return nameEl ? nameEl.textContent?.trim() : `no id`;
+        });
 
-      const visibleContacts = await getAllVisibleContacts(page);
-      const currentContactCount = visibleContacts.length;
-
-      console.log(`👥 Found ${currentContactCount} visible contacts`);
-
-      if (currentContactCount === previousContactCount) {
-        noNewContactsCount++;
-        console.log(`⚠️  No new contacts found (${noNewContactsCount}/3)`);
-
-        if (noNewContactsCount >= 3) {
-          console.log("🏁 Reached end of contact list");
-          break;
+        currentBatch.push(contactId);
+        if (!resultSet.has(contactId)) {
+          resultSet.add(contactId);
+          console.log(`✅ Successfully scraped contact: ${contactId}`);
+        } else {
+          console.log(`⏩ Duplicate skipped: ${contactId}`);
         }
-      } else {
-        noNewContactsCount = 0;
+      } catch (contactError) {
+        console.log(`❌ Error processing contact: ${contactError.message}`);
+        continue;
       }
-
-      previousContactCount = currentContactCount;
-
-      for (const contact of visibleContacts) {
-        try {
-          const contactId = await contact.evaluate((el) => {
-            const nameEl = el.querySelector('span[dir="auto"]');
-            return nameEl ? nameEl.textContent?.trim() : `contact-${Date.now()}-${Math.random()}`;
-          });
-
-          if (processedContacts.has(contactId)) {
-            console.log(`⏩ Skipping already processed contact: ${contactId}`);
-            continue;
-          }
-
-          processedContacts.add(contactId);
-
-          await contact.click();
-          await delay(300);
-
-          await page.locator(HEADER).click();
-          await delay(500);
-
-          const isGroup = await page.$('div[class="_alcd"]');
-          if (isGroup) {
-            console.log(`👥 Found a group: ${contactId}, skipping...`);
-            continue;
-          }
-
-          let phone = "Unknown";
-
-          const phoneElement = await page.$(SECONDARY);
-          if (phoneElement) {
-            try {
-              phone = await page.$eval(SECONDARY, (el) => el.textContent?.trim() || "Unknown");
-            } catch (phoneError) {
-              console.log(`🟡 Could not extract phone: ${phoneError.message}`);
-            }
-          } else {
-            console.log(`🟡 Phone element not found with selector: ${SECONDARY}`);
-          }
-
-          // Validate contactId and phone
-          let finalPhone = null;
-
-          if (isValidPhoneNumber(contactId)) {
-            finalPhone = contactId;
-          } else if (isValidPhoneNumber(phone)) {
-            finalPhone = phone;
-          } else {
-            errorCount++;
-            console.log(`❌ Invalid phone for contact: ${contactId} (${phone})`);
-            continue;
-          }
-
-          const contactData = { name: contactId, phone: finalPhone };
-          result.push(contactData);
-          successCount++;
-          console.log(`✅ Successfully scraped contact: ${contactId} - ${phone}`);
-        } catch (contactError) {
-          errorCount++;
-          console.log(`❌ Error processing contact ${errorCount}: ${contactError.message}`);
-          continue;
-        }
-      }
-      scrollPosition += scrollStep;
-      await delay(200);
     }
 
-    console.log(`\n📊 Final Scraping Summary:`);
-    console.log(`✅ Successfully scraped: ${successCount} contacts`);
-    console.log(`❌ Failed to scrape: ${errorCount} contacts`);
-    console.log(`📥 Total unique contacts: ${result.length}`);
-    console.log(`🔄 Total scroll attempts: ${scrollAttempts}`);
-    console.log(`📋 Scraped contacts:`, JSON.stringify(result, null, 2));
+    // Compare last 5 contacts of current batch
+    const last5 = currentBatch.slice(-5).sort();
+    if (last5.length === 5) {
+      recentBatches.push(last5);
+      if (recentBatches.length >= maxRepeats) {
+        const [a, b, c] = recentBatches.slice(-3);
+        const isRepeated = JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(b) === JSON.stringify(c);
+        if (isRepeated) {
+          console.log("⚠️ Last 5 contacts repeated 3 times — stopping early.");
+          break;
+        }
+      }
+    }
 
-    const phones = result.map((contact) => contact.phone).filter((phone) => phone && phone !== "Unknown");
-
-    console.log(`📱 Valid phone numbers: ${phones.length}`);
-
-    return res.status(200).json({ phoneNumbers: phones });
-  } catch (error) {
-    console.error("❌ Failed to scrape contacts:", error);
-    return res.status(500).json({ error: "Failed to scrape contacts" });
+    await page.mouse.wheel({ deltaY: 600 });
+    await delay(1500);
   }
+  const result = Array.from(resultSet);
+
+  console.log(`\n📊 Final Scraping Summary:`);
+  console.log(`📥 Total unique contacts: ${result.length}`);
+  console.log(`📋 Scraped contacts:`, JSON.stringify(result, null, 2));
+
+  return res.status(200).json({ phoneNumbers: result });
 });
 // ------------------ label activities ---------------------
 

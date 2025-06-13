@@ -3,7 +3,7 @@ console.log("[boot] STRIPE_LIVE_WEBHOOK_SECRET =", process.env.STRIPE_LIVE_WEBHO
 console.log("[boot] STRIPE_TEST_WEBHOOK_SECRET =", process.env.STRIPE_TEST_WEBHOOK_SECRET);
 const express = require("express");
 const http = require("http");
-const cors = require("cors"); 
+const cors = require("cors");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
@@ -219,11 +219,59 @@ app.post("/send-message", async (req, res) => {
     title,
   });
 
+  // List of possible selectors that might contain contact names or numbers
+  const contactSelectors = [
+    'div[class="x78zum5"] > span[dir="auto"]',
+    'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]',
+    'div[title="Profile details"] span[dir="auto"]',
+    'div[role="button"] span[dir="auto"]',
+    'div.selectable-text.copyable-text[dir="ltr"]',
+    // Generic message or profile span elements
+    "span.selectable-text.copyable-text",
+    "div.selectable-text.copyable-text",
+
+    // Message & profile name containers
+    "div.x1fcty0u.xhslqc4.x6prxxf.x1o2sk6j",
+    "div.x1e56ztr.x1xmf6yo", // WhatsApp name/header text
+    "span.x1e56ztr.x1xmf6yo", // Sometimes appears as span
+    "div._ak8q._ak8t", // Name section from chat details
+    "div._ak8q._ak8s", // Sometimes used for numbers
+
+    // Group info section
+    'div[aria-label*="Group profile picture"]',
+    'div[aria-label*="members"]',
+    'div[aria-label*="Group icon"]',
+    'div[aria-label*="Group"]',
+
+    // Fallback text-containing divs/spans
+    'div[role="textbox"]',
+    'span[role="textbox"]',
+    'span[dir="auto"]',
+    'div[dir="auto"]',
+
+    // Tooltip/popover elements (often show names/numbers)
+    "._ajgl._ab2e._ab37._ab3a._ab3b", // Hover profile cards
+
+    // Info section titles (e.g., group name or participant list)
+    "div._ak8q._ak8r",
+    "div._ak8q._ak8p",
+
+    // Phone numbers in profile/contact preview
+    'div[data-testid="conversation-info-header-contact"] span',
+    'div[data-testid="conversation-info-header-group"] span',
+
+    // Misc class combinations from Web WhatsApp DOM
+    "div._aigw",
+    "span._ajgl",
+    "span._ak1l",
+  ];
+
   const results = [];
+
   for (const phoneNumber of phoneNumbers) {
     try {
+      // 1. ── Search contact ───────────────────────────────────────────
       await checkAndClosePopup(page);
-      /* 1. ── Search contact ─────────────────────────────────────────── */
       const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
       await page.waitForSelector(searchBarSelector, { timeout: 10_000 });
       const searchBar = await page.$(searchBarSelector);
@@ -234,32 +282,52 @@ app.post("/send-message", async (req, res) => {
       await page.keyboard.press("Enter");
       await delay(1_000);
 
-      // /* 2. ── Grab contact labels ─────────────────────────────────────── */
-      // const rawText1 = await page.$eval('div[class="x78zum5"] > span[dir="auto"]', (span) => span.innerText);
-      // await page.locator('div[title="Profile details"]').click();
-      // await delay(500);
-      // const rawText2 = await page.$eval(
-      //   'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]',
-      //   (span) => span.innerText
-      // );
-      // await page.keyboard.press("Escape"); // close profile pane if opened
+      // 2. ── Grab contact labels ───────────────────────────────────────
+      await page
+        .locator('div[title="Profile details"]')
+        .click()
+        .catch(() => {});
+      await delay(500);
 
-      // /* 3. ── Normalise strings for comparison ───────────────────────── */
-      // const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+      let matchedTexts = [];
 
-      // const text1 = normalize(rawText1);
-      // const text2 = normalize(rawText2);
-      // const phone = normalize(phoneNumber);
+      for (const selector of contactSelectors) {
+        try {
+          const element = await page.$(selector);
+          if (element) {
+            const text = await page.evaluate((el) => el.innerText, element);
+            console.log(text);
+            if (text) matchedTexts.push(text);
+          }
+        } catch (_) {
+          // ignore errors for missing selectors
+        }
+      }
 
-      // const contactMatches = text1.includes(phone) || text2.includes(phone);
+      await page.keyboard.press("Escape"); // close profile pane if opened
+      await checkAndClosePopup(page);
 
-      // if (!contactMatches) {
-      //   console.log(`⚠️  ${phoneNumber} skipped – message text not found in contact titles`);
-      //   results.push({ phone: phoneNumber, status: "skipped", reason: "recipient mismatch" });
-      //   continue; // jump to next number
-      // }
+      if (matchedTexts.length === 0) {
+        console.log(`⚠️  ${phoneNumber} skipped – no matching contact selectors found`);
+        results.push({ phone: phoneNumber, status: "skipped", reason: "no contact match" });
+        continue;
+      }
 
-      /* 4. ── Send message ───────────────────────────────────────────── */
+      // 3. ── Normalise strings for comparison ─────────────────────────
+      const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+      const normalizedMatches = matchedTexts.map(normalize);
+      const phone = normalize(phoneNumber);
+
+      const contactMatches = normalizedMatches.some((text) => text === phone);
+
+      if (!contactMatches) {
+        console.log(`⚠️  ${phoneNumber} skipped – phone not matched in contact selectors`);
+        await page.screenshot({ path: `screenshots/mismatch-${phoneNumber}.png`, fullPage: true });
+        results.push({ phone: phoneNumber, status: "skipped", reason: "recipient mismatch" });
+        continue;
+      }
+
+      // 4. ── Send message ─────────────────────────────────────────────
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
       await page.waitForSelector(inputSelector, { timeout: 10_000 });
       await page.focus(inputSelector);
@@ -274,19 +342,21 @@ app.post("/send-message", async (req, res) => {
         }
       }
       await page.keyboard.press("Enter");
-      await checkAndClosePopup(page);
 
       console.log(`✅ Sent to ${phoneNumber}`);
-      await delay(1000); // wait for message to send
+      await delay(1000);
+      await checkAndClosePopup(page);
       results.push({ phone: phoneNumber, status: "sent" });
     } catch (err) {
+      await page.screenshot({ path: `screenshots/error-${phoneNumber}.png`, fullPage: true });
       console.error(`❌ ${phoneNumber} failed:`, err.message);
-      await delay(1000); // wait for message to send
+      await delay(1000);
       results.push({ phone: phoneNumber, status: "failed", reason: err.message });
-      continue; // keep looping
+      continue;
     }
   }
 
+  // 5. ── Save to DB ─────────────────────────────────────────────────
   try {
     const blast = new BlastMessage({
       userEmail,

@@ -1,8 +1,9 @@
 require("dotenv").config();
-
+console.log("[boot] STRIPE_LIVE_WEBHOOK_SECRET =", process.env.STRIPE_LIVE_WEBHOOK_SECRET);
+console.log("[boot] STRIPE_TEST_WEBHOOK_SECRET =", process.env.STRIPE_TEST_WEBHOOK_SECRET);
 const express = require("express");
 const http = require("http");
-const cors = require("cors"); //commented out in production
+const cors = require("cors"); 
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
@@ -28,8 +29,8 @@ app.use(express.json());
 if (process.env.ENV === "dev") {
   app.use(cors());
 }
-app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
+app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 app.use("/api/labels", labelRoutes);
 app.use("/api/stripe", stripeRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
@@ -120,6 +121,26 @@ const getAllVisibleContacts = async (page) => {
   return visibleContactElements.slice(0, 10); // Limit to 10
 };
 
+async function checkAndClosePopup(page) {
+  try {
+    const popupButtons = await page.$$('div[role="button"], button');
+
+    for (const button of popupButtons) {
+      const text = await page.evaluate((el) => el.innerText, button);
+      if (["Continue", "OK", "Got it", "Close"].includes(text.trim())) {
+        console.log(`⚠️ Popup detected with button: "${text.trim()}". Clicking.`);
+        await button.click();
+        await delay(1000); // Let the popup close
+        return true;
+      }
+    }
+
+    return false; // No popup found
+  } catch (err) {
+    console.error("❌ Error checking/closing popup:", err.message);
+    return false;
+  }
+}
 // ------------------ puppeteer activities ---------------------
 app.get("/", (req, res) => res.send("deal maker server is running developement"));
 
@@ -201,6 +222,7 @@ app.post("/send-message", async (req, res) => {
   const results = [];
   for (const phoneNumber of phoneNumbers) {
     try {
+      await checkAndClosePopup(page);
       /* 1. ── Search contact ─────────────────────────────────────────── */
       const searchBarSelector = 'div[contenteditable="true"][data-tab="3"]';
       await page.waitForSelector(searchBarSelector, { timeout: 10_000 });
@@ -212,30 +234,30 @@ app.post("/send-message", async (req, res) => {
       await page.keyboard.press("Enter");
       await delay(1_000);
 
-      /* 2. ── Grab contact labels ─────────────────────────────────────── */
-      const rawText1 = await page.$eval('div[class="x78zum5"] > span[dir="auto"]', (span) => span.innerText);
-      await page.locator('div[title="Profile details"]').click();
-      await delay(500);
-      const rawText2 = await page.$eval(
-        'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]',
-        (span) => span.innerText
-      );
-      await page.keyboard.press("Escape"); // close profile pane if opened
+      // /* 2. ── Grab contact labels ─────────────────────────────────────── */
+      // const rawText1 = await page.$eval('div[class="x78zum5"] > span[dir="auto"]', (span) => span.innerText);
+      // await page.locator('div[title="Profile details"]').click();
+      // await delay(500);
+      // const rawText2 = await page.$eval(
+      //   'span[dir="auto"] > span[class="x1jchvi3 x1fcty0u x40yjcy"]',
+      //   (span) => span.innerText
+      // );
+      // await page.keyboard.press("Escape"); // close profile pane if opened
 
-      /* 3. ── Normalise strings for comparison ───────────────────────── */
-      const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+      // /* 3. ── Normalise strings for comparison ───────────────────────── */
+      // const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
-      const text1 = normalize(rawText1);
-      const text2 = normalize(rawText2);
-      const phone = normalize(phoneNumber);
+      // const text1 = normalize(rawText1);
+      // const text2 = normalize(rawText2);
+      // const phone = normalize(phoneNumber);
 
-      const contactMatches = text1.includes(phone) || text2.includes(phone);
+      // const contactMatches = text1.includes(phone) || text2.includes(phone);
 
-      if (!contactMatches) {
-        console.log(`⚠️  ${phoneNumber} skipped – message text not found in contact titles`);
-        results.push({ phone: phoneNumber, status: "skipped", reason: "recipient mismatch" });
-        continue; // jump to next number
-      }
+      // if (!contactMatches) {
+      //   console.log(`⚠️  ${phoneNumber} skipped – message text not found in contact titles`);
+      //   results.push({ phone: phoneNumber, status: "skipped", reason: "recipient mismatch" });
+      //   continue; // jump to next number
+      // }
 
       /* 4. ── Send message ───────────────────────────────────────────── */
       const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
@@ -252,6 +274,7 @@ app.post("/send-message", async (req, res) => {
         }
       }
       await page.keyboard.press("Enter");
+      await checkAndClosePopup(page);
 
       console.log(`✅ Sent to ${phoneNumber}`);
       await delay(1000); // wait for message to send
@@ -398,7 +421,7 @@ app.post("/scrape-contacts", async (req, res) => {
   const recentBatches = [];
   const maxRepeats = 3;
 
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 100; i++) {
     const visibleContacts = await getAllVisibleContacts(page);
     const currentBatch = [];
 
@@ -437,7 +460,7 @@ app.post("/scrape-contacts", async (req, res) => {
     }
 
     await page.mouse.wheel({ deltaY: 600 });
-    await delay(1500);
+    await delay(1000);
   }
   const result = Array.from(resultSet);
 
